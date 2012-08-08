@@ -1,5 +1,6 @@
 
 
+
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld) where
 
@@ -25,7 +26,7 @@ instance Ord Point where
     compare (Point x1 y1) (Point x2 y2) = compare (y1, x1) (y2, x2)
 
 data World = World { _field         :: M.Map Point Cell
-                   , _sets          :: M.Map Cell Point
+                   , _sets          :: M.Map Cell (S.Set Point)
                    , _trampForward  :: M.Map Point Point
                    , _trampBackward :: M.Map Point [Point]
                    , _flooding      :: Int
@@ -35,6 +36,10 @@ data World = World { _field         :: M.Map Point Cell
                    , _razors        :: Int
                    , _turn          :: Int
                    } deriving (Show)
+
+data Command = CLeft | CRight | CUp | CDown | CWait | CShave
+
+cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
 
 $(makeLenses [''World])
 
@@ -59,6 +64,7 @@ parseWorld rawData = (flip execState) emptyWorld $ do
         modify $ field ^= (parseField fLines)
         modify $ trampForward ^= fw
         modify $ trampBackward ^= compileBackwardTramp fw
+        modify $ recache
   where
     (fLines, vars, trampPairs) = splitConf rawData
     splitConf cdata = (fieldLines, vars, tramps)
@@ -119,6 +125,12 @@ parseWorld rawData = (flip execState) emptyWorld $ do
     compileBackwardTramp fw = foldr ins M.empty (M.toList fw)
         where ins (src, dst) = M.insertWith (++) dst [src]
 
+recache :: World -> World
+recache w = (sets ^= (foldr add initial $ M.toList $ w ^. field) ) w
+  where add (p, c) = M.adjust (S.insert p) c
+        initial = foldr (\k -> M.insert k S.empty) M.empty $
+                                          S.toList cachedCellTypes
+
 drawWorld :: World -> [String]
 drawWorld w = map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
   where grouped = groupBy sameLine
@@ -142,3 +154,39 @@ drawWorld w = map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
                         Beard -> 'W'
                         Razor -> '!'
                         Lambda -> '\\'
+
+charToCommand :: Char -> Command
+charToCommand ch = case ch of
+                        'L' -> CLeft
+                        'R' -> CRight
+                        'D' -> CDown
+                        'U' -> CUp
+                        'W' -> CWait
+                        'S' -> CShave
+                        otherwise -> undefined -- input should already be validated...
+
+commandToChar :: Command -> Char
+commandToChar c = case c of
+                        CLeft  -> 'L'
+                        CRight -> 'R'
+                        CDown  -> 'D'
+                        CUp    -> 'U'
+                        CWait  -> 'W'
+                        CShave -> 'S'
+
+halfStep :: Command -> State World Bool
+halfStep cmd = case cmd of
+                      CLeft  -> move (-1)   0
+                      CRight -> move   1    0
+                      CUp    -> move   0    1
+                      CDown  -> move   0  (-1)
+                      CWait  -> return True
+                      CShave -> shave
+
+move x y = return True
+shave = return True
+
+getRobot :: State World Point
+getRobot = do
+   Just s <- liftM (M.lookup Robot . (sets ^$)) get
+   return $ head $ S.toList s
