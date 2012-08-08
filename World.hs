@@ -1,10 +1,12 @@
+
+
 {-# LANGUAGE TemplateHaskell #-}
-module World (World, emptyWorld, parseWorld) where
+module World (World, emptyWorld, parseWorld, drawWorld) where
 
 import Control.Arrow (second)
 import Control.Monad (liftM)
 import Control.Monad.State (State, execState, modify, get)
-import Data.List (span)
+import Data.List (groupBy, span)
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
 import qualified Data.Map as M
@@ -117,3 +119,26 @@ parseWorld rawData = (flip execState) emptyWorld $ do
     compileBackwardTramp fw = foldr ins M.empty (M.toList fw)
         where ins (src, dst) = M.insertWith (++) dst [src]
 
+drawWorld :: World -> [String]
+drawWorld w = map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
+  where grouped = groupBy sameLine
+        sameLine (Point _ y1, _) (Point _ y2, _) = y1 == y2
+        renderLine s i [] = reverse s
+        renderLine s i axs@((Point x _, c):xs) | x == i = renderLine (toChar c:s)
+                                                                       (x+1) xs
+                                               | True   = renderLine (' ':s) (i+1) axs
+        toChar c = case c of
+                        Empty -> ' '
+                        Earth -> '.'
+                        Rock -> '*'
+                        HoRock -> '@'
+                        Wall -> '#'
+                        Robot -> 'R'
+                        OLift -> 'O'
+                        CLift -> 'L'
+                        TrEntry -> 'T'
+                        TrExit -> 't'
+                        Unknown -> '?'
+                        Beard -> 'W'
+                        Razor -> '!'
+                        Lambda -> '\\'
