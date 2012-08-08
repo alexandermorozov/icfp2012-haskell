@@ -64,7 +64,7 @@ parseWorld rawData = (flip execState) emptyWorld $ do
     splitConf cdata = (fieldLines, vars, tramps)
         where ls = lines cdata
               (fieldLines, rest) = break (== "") ls
-              extras = map (break (== ' ')) (tail rest)
+              extras = if null rest then [] else map (break (== ' ')) (tail rest)
               (varLines, trampLines) = span ((/= "Trampoline") . fst) extras
               vars = map (second read) varLines :: [(String, Int)]
               tramps = map (parseTramp . snd) trampLines
