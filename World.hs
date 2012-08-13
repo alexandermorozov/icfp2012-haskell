@@ -2,7 +2,10 @@
 
 
 {-# LANGUAGE TemplateHaskell #-}
-module World (World, emptyWorld, parseWorld, drawWorld) where
+module World (World, emptyWorld, parseWorld, drawWorld,
+              step,
+              Command (..)
+             ) where
 
 import Control.Arrow (second)
 import Control.Monad (liftM)
@@ -21,6 +24,9 @@ data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
           deriving (Eq, Ord, Show)
 
 data Point = Point Int Int deriving (Eq, Show)
+data Vector = Vector Int Int deriving (Eq, Show)
+
+data Ending = Win | Abort | Fail deriving (Show)
 
 instance Ord Point where
     compare (Point x1 y1) (Point x2 y2) = compare (y1, x1) (y2, x2)
@@ -35,9 +41,11 @@ data World = World { _field         :: M.Map Point Cell
                    , _growth        :: Int
                    , _razors        :: Int
                    , _turn          :: Int
+                   , _lambdas       :: Int
+                   , _ending        :: Maybe Ending
                    } deriving (Show)
 
-data Command = CLeft | CRight | CUp | CDown | CWait | CShave
+data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort
 
 cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
 
@@ -55,6 +63,8 @@ emptyWorld =
           , _growth = 0
           , _razors = 0
           , _turn = 0
+          , _lambdas = 0
+          , _ending = Nothing
           }
 
 parseWorld :: String -> World
@@ -86,7 +96,7 @@ parseWorld rawData = (flip execState) emptyWorld $ do
     setVar (k, v) = case lookup k optionList of
         Just setter -> setter ^= v
         Nothing     -> id
-    cellList fLines = helper 1 1 fLines
+    cellList fLines = helper 1 1 (reverse fLines)
         where helper x y [[]] = []
               helper x y ([]:lines) = helper 1 (y+1) lines
               helper x y ((c:rest):ls) = (Point x y, c):(helper (x+1) y (rest:ls))
@@ -132,7 +142,7 @@ recache w = (sets ^= (foldr add initial $ M.toList $ w ^. field) ) w
                                           S.toList cachedCellTypes
 
 drawWorld :: World -> [String]
-drawWorld w = map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
+drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
   where grouped = groupBy sameLine
         sameLine (Point _ y1, _) (Point _ y2, _) = y1 == y2
         renderLine s i [] = reverse s
@@ -163,6 +173,7 @@ charToCommand ch = case ch of
                         'U' -> CUp
                         'W' -> CWait
                         'S' -> CShave
+                        'A' -> CAbort
                         otherwise -> undefined -- input should already be validated...
 
 commandToChar :: Command -> Char
@@ -173,20 +184,60 @@ commandToChar c = case c of
                         CUp    -> 'U'
                         CWait  -> 'W'
                         CShave -> 'S'
+                        CAbort -> 'A'
 
+step c = execState (halfStep c)
+
+-- returns True, if something useful happened: robot moved, beard was shaved
+--         False, if moving failed or no beard was actually shaved
 halfStep :: Command -> State World Bool
 halfStep cmd = case cmd of
                       CLeft  -> move (-1)   0
                       CRight -> move   1    0
                       CUp    -> move   0    1
                       CDown  -> move   0  (-1)
+                      CAbort -> modify (ending ^= (Just Abort)) >> return False
                       CWait  -> return True
                       CShave -> shave
 
-move x y = return True
+shiftPoint :: Point -> Vector -> Point
+shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
+
+move :: Int -> Int -> State World Bool
+move dx dy = do
+    r <- getRobot
+    let r' = shiftPoint r $ Vector dx dy
+    c' <- liftM (getCell r') get
+    case c' of
+        Empty  -> moveBot r r'
+        Earth  -> moveBot r r'
+        Lambda -> modify (lambdas ^%= (+1)) >> moveBot r r'
+        Razor  -> modify (razors  ^%= (+1)) >> moveBot r r'
+        OLift  -> modify (ending ^= (Just Win)) >> moveBot r r'
+        TrEntry -> teleport r r'
+        Rock   -> return False -- FIXME
+        HoRock -> return False -- FIXME
+        otherwise -> return False
+    --if c' `elem` [Earth, Empty, Lambda, OLift, TrampEntry, Razor]
+    --    then][]]
+  where moveBot :: Point -> Point -> State World Bool
+        moveBot r r' = modify (setCell r' Robot . setCell r Empty) >> return True
+        teleport r r' = return True
+
 shave = return True
+
 
 getRobot :: State World Point
 getRobot = do
-   Just s <- liftM (M.lookup Robot . (sets ^$)) get
-   return $ head $ S.toList s
+    Just s <- liftM (M.lookup Robot . (sets ^$)) get
+    return $ head $ S.toList s
+
+getCell :: Point -> World -> Cell
+getCell p = M.findWithDefault Unknown p . (field ^$)
+
+setCell :: Point -> Cell -> World -> World
+setCell p c' w = w {_field = f', _sets = s''}
+  where f'  = M.insert p c' (w ^. field)
+        c   = getCell p w
+        s'  = M.adjust (S.delete p) c (w ^. sets)
+        s'' = M.adjust (S.insert p) c' s'
