@@ -3,6 +3,7 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld,
+              turn,
               step,
               Command (..)
              ) where
