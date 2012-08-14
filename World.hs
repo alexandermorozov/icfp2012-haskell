@@ -3,7 +3,7 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld,
-              turn,
+              turn, ending,
               step,
               Command (..)
              ) where
@@ -216,14 +216,25 @@ move dx dy = do
         Razor  -> modify (razors  ^%= (+1)) >> moveBot r r'
         OLift  -> modify (ending ^= (Just Win)) >> moveBot r r'
         TrEntry -> teleport r r'
-        Rock   -> return False -- FIXME
-        HoRock -> return False -- FIXME
+        Rock   -> moveRock r r' dx c'
+        HoRock -> moveRock r r' dx c'
         otherwise -> return False
     --if c' `elem` [Earth, Empty, Lambda, OLift, TrampEntry, Razor]
     --    then][]]
   where moveBot :: Point -> Point -> State World Bool
         moveBot r r' = modify (setCell r' Robot . setCell r Empty) >> return True
-        teleport r r' = return True
+        moveRock r r' dx c'= do
+            let r'' = shiftPoint r' $ Vector dx 0
+            c'' <- liftM (getCell r'') get
+            if dx /= 0 && c'' == Empty
+               then modify (setCell r'' c' . setCell r' Robot . setCell r Empty) >>
+                    return True
+               else return False
+        teleport r r' = do
+            exitP <- liftM (flip (M.!) r' . (trampForward ^$)) get
+            entryPs <- liftM (flip (M.!) exitP . (trampBackward ^$)) get
+            mapM_ (\p -> modify $ setCell p Empty) entryPs
+            moveBot r exitP
 
 shave = return True
 
