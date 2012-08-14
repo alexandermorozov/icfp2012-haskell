@@ -11,7 +11,7 @@ module World (World, emptyWorld, parseWorld, drawWorld,
 import Control.Arrow (second)
 import Control.Monad (liftM)
 import Control.Monad.State (State, execState, modify, get, gets)
-import Data.List (groupBy, span)
+import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
 import qualified Data.Map as M
@@ -187,7 +187,7 @@ commandToChar c = case c of
                         CShave -> 'S'
                         CAbort -> 'A'
 
-step c = execState (halfStep c)
+step c = execState (halfStep c >> update)
 
 -- returns True, if something useful happened: robot moved, beard was shaved
 --         False, if moving failed or no beard was actually shaved
@@ -218,6 +218,25 @@ halfStep cmd = case cmd of
            else
                return False
 
+update :: State World ()
+update = do
+    s0 <- get
+    setsMap <- gets $ (sets ^$)
+    let setsToCheck = map ((M.!) setsMap) [Rock, HoRock, Beard, CLift]
+    let toCheck = foldl' S.union S.empty $ setsToCheck
+    mapM_ updateCell (S.toAscList toCheck)
+  where
+    updateCell p = do
+        c <- gets $ getCell p
+        case c of
+          Rock   -> updateRock p c
+          HoRock -> updateRock p c
+          Beard  -> updateBeard p
+          CLift  -> updateCLift p
+        return ()
+    updateRock p c = return ()
+    updateBeard p = return ()
+    updateCLift p = return ()
 
 shiftPoint :: Point -> Vector -> Point
 shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
@@ -253,7 +272,6 @@ move dx dy = do
             entryPs <- gets $ flip (M.!) exitP . (trampBackward ^$)
             mapM_ (\p -> modify $ setCell p Empty) entryPs
             moveBot r exitP
-
 
 
 getRobot :: State World Point

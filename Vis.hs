@@ -15,7 +15,7 @@ main = do
 
     hSetBuffering stdin NoBuffering
 
-    loop s
+    --loop s
   where
     draw s = do
         putStrLn $ "Turn " ++ show (s ^. turn) ++ 
