@@ -18,7 +18,9 @@ main = do
     loop s
   where
     draw s = do
-        putStrLn $ "Turn " ++ show (s ^. turn) ++ " / Ending " ++ show (s ^. ending)
+        putStrLn $ "Turn " ++ show (s ^. turn) ++ 
+                   " / Razors " ++ show (s ^. razors) ++
+                   " / Ending " ++ show (s ^. ending)
         putStrLn $ unlines $ drawWorld s
     loop s = do
         cmdChar <- hGetChar stdin

@@ -3,14 +3,14 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld,
-              turn, ending,
+              turn, ending, razors,
               step,
               Command (..)
              ) where
 
 import Control.Arrow (second)
 import Control.Monad (liftM)
-import Control.Monad.State (State, execState, modify, get)
+import Control.Monad.State (State, execState, modify, get, gets)
 import Data.List (groupBy, span)
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
@@ -200,6 +200,24 @@ halfStep cmd = case cmd of
                       CAbort -> modify (ending ^= (Just Abort)) >> return False
                       CWait  -> return True
                       CShave -> shave
+  where
+    shaveArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
+    shavePoint :: Point -> State World Bool
+    shavePoint p = do c <- gets $ getCell p
+                      if (c == Beard)
+                         then modify (setCell p Empty) >> return True
+                         else return False
+    shave = do
+        rz <- gets (razors ^$)
+        if rz > 0
+           then do
+               r <- getRobot
+               changed <- mapM (\v -> shavePoint (shiftPoint r v)) shaveArea
+               modify $ (razors ^%= (flip (-) 1))
+               return $ or changed
+           else
+               return False
+
 
 shiftPoint :: Point -> Vector -> Point
 shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
@@ -208,7 +226,7 @@ move :: Int -> Int -> State World Bool
 move dx dy = do
     r <- getRobot
     let r' = shiftPoint r $ Vector dx dy
-    c' <- liftM (getCell r') get
+    c' <- gets $ getCell r'
     case c' of
         Empty  -> moveBot r r'
         Earth  -> moveBot r r'
@@ -225,23 +243,22 @@ move dx dy = do
         moveBot r r' = modify (setCell r' Robot . setCell r Empty) >> return True
         moveRock r r' dx c'= do
             let r'' = shiftPoint r' $ Vector dx 0
-            c'' <- liftM (getCell r'') get
+            c'' <- gets $ getCell r''
             if dx /= 0 && c'' == Empty
                then modify (setCell r'' c' . setCell r' Robot . setCell r Empty) >>
                     return True
                else return False
         teleport r r' = do
-            exitP <- liftM (flip (M.!) r' . (trampForward ^$)) get
-            entryPs <- liftM (flip (M.!) exitP . (trampBackward ^$)) get
+            exitP <- gets $ flip (M.!) r' . (trampForward ^$)
+            entryPs <- gets $ flip (M.!) exitP . (trampBackward ^$)
             mapM_ (\p -> modify $ setCell p Empty) entryPs
             moveBot r exitP
 
-shave = return True
 
 
 getRobot :: State World Point
 getRobot = do
-    Just s <- liftM (M.lookup Robot . (sets ^$)) get
+    Just s <- gets $ M.lookup Robot . (sets ^$)
     return $ head $ S.toList s
 
 getCell :: Point -> World -> Cell
