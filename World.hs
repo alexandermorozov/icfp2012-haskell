@@ -258,7 +258,13 @@ update = do
                              in do c' <- breakRock c p'
                                    modify (setCell p' c' . setCell p Empty)
     updateBeard p = return ()
-    updateCLift p = return ()
+    updateCLift p = do
+        m <- gets $ (sets ^$)
+        let nl = \c -> S.null $ (M.!) m c
+        if nl Lambda && nl HoRock && not (nl CLift)
+           then let p = head $ S.toList $ (M.!) m CLift
+                in modify $ setCell p OLift
+           else return ()
 
 shiftPoint :: Point -> Vector -> Point
 shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
