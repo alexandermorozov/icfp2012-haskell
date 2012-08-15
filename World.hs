@@ -249,8 +249,14 @@ update = do
               | True                                        -> return ()
       where isRock c = c == Rock || c == HoRock
             --isRock = (||) <$> (== Rock) <*> (== HoRock)
-            moveRock dx dy = let p' = shiftPoint p $ Vector dx dy
-                             in modify (setCell p' c . setCell p Empty) >> return ()
+            breakRock HoRock p' = do
+                c <- gets $ getCell (shiftPoint p' $ Vector 0 (-1))
+                return $ if c == Empty then HoRock else Lambda
+            breakRock Rock p' = return Rock
+
+            moveRock dx dy = let p'  = shiftPoint p  $ Vector dx dy
+                             in do c' <- breakRock c p'
+                                   modify (setCell p' c' . setCell p Empty)
     updateBeard p = return ()
     updateCLift p = return ()
 
