@@ -234,7 +234,23 @@ update = do
           Beard  -> updateBeard p
           CLift  -> updateCLift p
         return ()
-    updateRock p c = return ()
+    updateRock p c = do
+        let rel dx dy = gets $ getCell (shiftPoint p $ Vector dx dy)
+        cR <-  rel   1    0
+        cL <-  rel (-1)   0
+        cD  <- rel   0  (-1)
+        cDL <- rel (-1) (-1)
+        cDR <- rel   1  (-1)
+        case True of
+            _ | cD == Empty                                 -> moveRock   0  (-1)
+              | isRock cD    && cR == Empty && cDR == Empty -> moveRock   1  (-1)
+              | isRock cD    && cL == Empty && cDL == Empty -> moveRock (-1) (-1)
+              | cD == Lambda && cR == Empty && cDR == Empty -> moveRock   1  (-1)
+              | True                                        -> return ()
+      where isRock c = c == Rock || c == HoRock
+            --isRock = (||) <$> (== Rock) <*> (== HoRock)
+            moveRock dx dy = let p' = shiftPoint p $ Vector dx dy
+                             in modify (setCell p' c . setCell p Empty) >> return ()
     updateBeard p = return ()
     updateCLift p = return ()
 

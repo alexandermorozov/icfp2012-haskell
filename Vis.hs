@@ -10,12 +10,12 @@ main = do
     fData <- readFile mapFile
     let s = parseWorld fData
     draw s
-    let s' = foldl' (flip step) s $ take 1000000 $ cycle [CUp, CDown]
+    let s' = foldl' (flip step) s $ take 100000 $ cycle [CUp, CDown]
     draw s'
 
     hSetBuffering stdin NoBuffering
 
-    --loop s
+    loop s
   where
     draw s = do
         putStrLn $ "Turn " ++ show (s ^. turn) ++ 
