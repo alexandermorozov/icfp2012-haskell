@@ -9,8 +9,9 @@ module World (World, emptyWorld, parseWorld, drawWorld,
              ) where
 
 import Control.Arrow (second)
-import Control.Monad (liftM)
+import Control.Monad (liftM, when)
 import Control.Monad.State (State, execState, modify, get, gets)
+import Data.Maybe (isNothing)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
@@ -187,7 +188,9 @@ commandToChar c = case c of
                         CShave -> 'S'
                         CAbort -> 'A'
 
-step c = execState (halfStep c >> update)
+step c = execState $ do
+    notEnded <- gets $ isNothing . (ending ^$)
+    when notEnded (halfStep c >> update)
 
 -- returns True, if something useful happened: robot moved, beard was shaved
 --         False, if moving failed or no beard was actually shaved
@@ -220,6 +223,7 @@ halfStep cmd = case cmd of
 
 update :: State World ()
 update = do
+    modify (turn ^%= (+1))
     s0 <- get
     setsMap <- gets $ (sets ^$)
     let setsToCheck = map ((M.!) setsMap) [Rock, HoRock, Beard, CLift]
@@ -255,8 +259,11 @@ update = do
             breakRock Rock p' = return Rock
 
             moveRock dx dy = let p'  = shiftPoint p  $ Vector dx dy
-                             in do c' <- breakRock c p'
+                                 p'' = shiftPoint p' $ Vector 0 (-1)
+                             in do c'  <- breakRock c p'
+                                   c'' <- gets $ getCell p''
                                    modify (setCell p' c' . setCell p Empty)
+                                   when (c'' == Robot) (modify $ (ending ^= Just Fail))
     updateBeard p = return ()
     updateCLift p = do
         m <- gets $ (sets ^$)
