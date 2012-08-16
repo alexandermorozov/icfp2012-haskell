@@ -1,7 +1,11 @@
-
-
-
 {-# LANGUAGE TemplateHaskell #-}
+-- TODO:
+--  implement flooding
+--  implement beard
+--  refactor: Point ==> newtype Vector Int; v = y*2^14 + x
+--  refactor: type Cell = Char; should simplify code, impact on performance
+--                              isn't clear
+
 module World (World, emptyWorld, parseWorld, drawWorld,
               turn, ending, razors,
               step,
@@ -323,3 +327,4 @@ setCell p c' w = w {_field = f', _sets = s''}
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
+
