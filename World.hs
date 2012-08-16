@@ -1,7 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 -- TODO:
 --  implement flooding
---  implement beard
 --  refactor: Point ==> newtype Vector Int; v = y*2^14 + x
 --  refactor: type Cell = Char; should simplify code, impact on performance
 --                              isn't clear
@@ -208,7 +207,6 @@ halfStep cmd = case cmd of
                       CWait  -> return True
                       CShave -> shave
   where
-    shaveArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
     shavePoint :: Point -> State World Bool
     shavePoint p = do c <- gets $ getCell p
                       if (c == Beard)
@@ -219,7 +217,7 @@ halfStep cmd = case cmd of
         if rz > 0
            then do
                r <- getRobot
-               changed <- mapM (\v -> shavePoint (shiftPoint r v)) shaveArea
+               changed <- mapM (\v -> shavePoint (shiftPoint r v)) closeArea
                modify $ (razors ^%= (flip (-) 1))
                return $ or changed
            else
@@ -230,13 +228,17 @@ update = do
     modify (turn ^%= (+1))
     s0 <- get
     setsMap <- gets $ (sets ^$)
-    let setsToCheck = map ((M.!) setsMap) [Rock, HoRock, Beard, CLift]
+    let tn = s0 ^. turn
+        bd = s0 ^. growth
+        doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
+        types = (if doGrow then (Beard:) else id) [Rock, HoRock, CLift]
+        setsToCheck = map ((M.!) setsMap) types
     let toCheck = foldl' S.union S.empty $ setsToCheck
     mapM_ updateCell (S.toAscList toCheck)
   where
     updateCell p = do
         c <- gets $ getCell p
-        case c of
+        case (trace (show p ++ show c) c) of
           Rock   -> updateRock p c
           HoRock -> updateRock p c
           Beard  -> updateBeard p
@@ -261,14 +263,16 @@ update = do
                 c <- gets $ getCell (shiftPoint p' $ Vector 0 (-1))
                 return $ if c == Empty then HoRock else Lambda
             breakRock Rock p' = return Rock
-
             moveRock dx dy = let p'  = shiftPoint p  $ Vector dx dy
                                  p'' = shiftPoint p' $ Vector 0 (-1)
                              in do c'  <- breakRock c p'
                                    c'' <- gets $ getCell p''
                                    modify (setCell p' c' . setCell p Empty)
                                    when (c'' == Robot) (modify $ (ending ^= Just Fail))
-    updateBeard p = return ()
+    updateBeard p = mapM_ (\v -> growBeard (shiftPoint p v)) closeArea
+    growBeard p = do c <- gets $ getCell p
+                     when (c == Empty) (modify $ setCell p Beard)
+
     updateCLift p = do
         m <- gets $ (sets ^$)
         let nl = \c -> S.null $ (M.!) m c
@@ -276,6 +280,8 @@ update = do
            then let p = head $ S.toList $ (M.!) m CLift
                 in modify $ setCell p OLift
            else return ()
+
+closeArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
 
 shiftPoint :: Point -> Vector -> Point
 shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)

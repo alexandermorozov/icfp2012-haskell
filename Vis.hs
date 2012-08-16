@@ -10,7 +10,7 @@ main = do
     fData <- readFile mapFile
     let s = parseWorld fData
     draw s
-    let s' = foldl' (flip step) s $ take 100000 $ cycle [CUp, CDown]
+    let s' = foldl' (flip step) s $ take 1000 $ cycle [CUp, CDown]
     draw s'
 
     hSetBuffering stdin NoBuffering
