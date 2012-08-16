@@ -14,11 +14,12 @@ module World (World, emptyWorld, parseWorld, drawWorld,
 import Control.Arrow (second)
 import Control.Monad (liftM, when)
 import Control.Monad.State (State, execState, modify, get, gets)
-import Data.Maybe (isNothing, fromJust)
+import Data.Char (isDigit)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
 import qualified Data.Map as M
+import Data.Maybe (isNothing, fromJust, fromMaybe)
 import qualified Data.Set as S
 import Data.Tuple (swap)
 import Debug.Trace (trace)
@@ -75,13 +76,13 @@ emptyWorld =
           }
 
 parseWorld :: String -> World
-parseWorld rawData = (flip execState) emptyWorld $ do
+parseWorld rawData = flip execState emptyWorld $ do
         let fw = getForwardTramp fLines trampPairs
-        modify $ \w -> (foldr setVar w vars)
-        modify $ field ^= (parseField fLines)
+        modify $ \w -> foldr setVar w vars
+        modify $ field ^= parseField fLines
         modify $ trampForward ^= fw
         modify $ trampBackward ^= compileBackwardTramp fw
-        modify $ recache
+        modify   recache
   where
     (fLines, vars, trampPairs) = splitConf rawData
     splitConf cdata = (fieldLines, vars, tramps)
@@ -92,7 +93,7 @@ parseWorld rawData = (flip execState) emptyWorld $ do
               vars = map (second read) varLines :: [(String, Int)]
               tramps = map (parseTramp . snd) trampLines
     parseTramp l = let parts = words l
-                   in (head $ parts !! 0, head $ parts !! 2)
+                   in (head $ head parts, head $ parts !! 2)
 
     optionList = [ ("Flooding",   flooding)
                  , ("Water",      water)
@@ -106,7 +107,7 @@ parseWorld rawData = (flip execState) emptyWorld $ do
     cellList fLines = helper 1 1 (reverse fLines)
         where helper x y [[]] = []
               helper x y ([]:lines) = helper 1 (y+1) lines
-              helper x y ((c:rest):ls) = (Point x y, c):(helper (x+1) y (rest:ls))
+              helper x y ((c:rest):ls) = (Point x y, c) : helper (x+1) y (rest:ls)
     parseField fLines = M.fromList $ map (second toCell) (cellList fLines)
     toCell c =
          case c of
@@ -121,20 +122,18 @@ parseWorld rawData = (flip execState) emptyWorld $ do
              '\\'-> Lambda
              'W' -> Beard
              '!' -> Razor
-             x | isTrampEntry(x) -> TrEntry
-             x | isTrampExit(x)  -> TrExit
+             x | isTrampEntry x -> TrEntry
+             x | isTrampExit  x -> TrExit
              otherwise -> Unknown
     isTrampEntry c = c >= 'A' && c <= 'I'
-    isTrampExit  c = c >= '0' && c <= '9'
+    isTrampExit    = isDigit
 
     getForwardTramp :: [String] -> [(Char, Char)] -> M.Map Point Point
     getForwardTramp fLines routes = forward
         where cells = cellList fLines
-              isTramp = \x -> isTrampEntry x || isTrampExit x
+              isTramp x = isTrampEntry x || isTrampExit x
               all = map swap $ filter (isTramp . snd) cells
-              get a = case lookup a all of
-                           Just x -> x
-                           Nothing -> Point (-1) (-1)
+              get a = fromMaybe (Point (-1) (-1)) (lookup a all)
               getMapping (a, b) = (get a, get b)
               forward = M.fromList $ map getMapping routes
 
@@ -143,9 +142,9 @@ parseWorld rawData = (flip execState) emptyWorld $ do
         where ins (src, dst) = M.insertWith (++) dst [src]
 
 recache :: World -> World
-recache w = (sets ^= (foldr add initial $ M.toList $ w ^. field) ) w
+recache w = (sets ^= foldr add initial (M.toList $ w ^. field)) w
   where add (p, c) = M.adjust (S.insert p) c
-        initial = foldr (\k -> M.insert k S.empty) M.empty $
+        initial = foldr (`M.insert` S.empty) M.empty $
                                           S.toList cachedCellTypes
 
 drawWorld :: World -> [String]
@@ -153,9 +152,9 @@ drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. fiel
   where grouped = groupBy sameLine
         sameLine (Point _ y1, _) (Point _ y2, _) = y1 == y2
         renderLine s i [] = reverse s
-        renderLine s i axs@((Point x _, c):xs) | x == i = renderLine (toChar c:s)
-                                                                       (x+1) xs
-                                               | True   = renderLine (' ':s) (i+1) axs
+        renderLine s i axs@((Point x _, c):xs)
+             | x == i = renderLine (toChar c:s) (x+1) xs
+             | otherwise = renderLine (' ':s) (i+1) axs
         toChar c = case c of
                         Empty -> ' '
                         Earth -> '.'
@@ -205,22 +204,22 @@ halfStep cmd = case cmd of
                       CRight -> move   1    0
                       CUp    -> move   0    1
                       CDown  -> move   0  (-1)
-                      CAbort -> modify (ending ^= (Just Abort)) >> return False
+                      CAbort -> endM Abort >> return False
                       CWait  -> return True
                       CShave -> shave
   where
     shavePoint :: Point -> State World Bool
     shavePoint p = do c <- getCellM p
-                      if (c == Beard)
+                      if c == Beard
                          then setCellM p Empty >> return True
                          else return False
     shave = do
         rz <- gets (razors ^$)
         if rz > 0
            then do
-               r <- getRobotM
-               changed <- mapM (\v -> shavePoint (shiftPoint r v)) closeArea
-               modify $ (razors ^%= (flip (-) 1))
+               r <- gets getRobot
+               changed <- mapM (shavePoint . shiftPoint r) closeArea
+               modify $ razors ^%= flip (-) 1
                return $ or changed
            else
                return False
@@ -228,9 +227,9 @@ halfStep cmd = case cmd of
 update :: State World ()
 update = do
     s0 <- get
-    modify (turn ^%= (+1))
+    modify $ turn ^%= (+1)
     s0' <- get
-    setsMap <- gets $ (sets ^$)
+    setsMap <- gets (sets ^$)
     let tn = s0' ^. turn
         bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
@@ -239,12 +238,12 @@ update = do
         Point _ robotY = getRobot s0
         isUnderWater = waterLevel s0 >= robotY
         isUnderWater' = waterLevel s0' >= robotY
-    let toCheck = foldl' S.union S.empty $ setsToCheck
+    let toCheck = foldl' S.union S.empty setsToCheck
     if isUnderWater || isUnderWater'
-       then (modify $ underwater ^%= (+1))
-       else (modify $ underwater ^= 0)
-    nUnder <- gets $ (underwater ^$)
-    when (nUnder > (s0 ^. waterproof)) (modify $ ending ^= Just Fail)
+       then modify $ underwater ^%= (+1)
+       else modify $ underwater ^= 0
+    nUnder <- gets (underwater ^$)
+    when (nUnder > (s0 ^. waterproof)) (endM Fail)
     mapM_ updateCell (S.toAscList toCheck)
   where
     updateCell p = do
@@ -267,7 +266,7 @@ update = do
               | isRock cD    && cR == Empty && cDR == Empty -> moveRock   1  (-1)
               | isRock cD    && cL == Empty && cDL == Empty -> moveRock (-1) (-1)
               | cD == Lambda && cR == Empty && cDR == Empty -> moveRock   1  (-1)
-              | True                                        -> return ()
+              | otherwise                                   -> return ()
       where isRock c = c == Rock || c == HoRock
             --isRock = (||) <$> (== Rock) <*> (== HoRock)
             breakRock HoRock p' = do
@@ -280,24 +279,23 @@ update = do
                                    c'' <- getCellM p''
                                    setCellM p Empty
                                    setCellM p' c'
-                                   when (c'' == Robot) (modify $ (ending ^= Just Fail))
-    updateBeard p = mapM_ (\v -> growBeard (shiftPoint p v)) closeArea
+                                   when (c'' == Robot) (endM Fail)
+    updateBeard p = mapM_ (growBeard . shiftPoint p) closeArea
     growBeard p = do c <- getCellM p
                      when (c == Empty) $ setCellM p Beard
 
     updateCLift p = do
-        m <- gets $ (sets ^$)
-        let nl = \c -> S.null $ (M.!) m c
-        if nl Lambda && nl HoRock && not (nl CLift)
-           then let p = head $ S.toList $ (M.!) m CLift
-                in setCellM p OLift
-           else return ()
+        m <- gets (sets ^$)
+        let nl c = S.null $ (M.!) m c
+        when (nl Lambda && nl HoRock && not (nl CLift)) $
+           let p = head $ S.toList $ (M.!) m CLift
+           in setCellM p OLift
 
 waterLevel :: World -> Int
 waterLevel w =
     if w ^. flooding > 0
        then (w ^. water) + (w ^. turn) `div` (w ^. flooding)
-       else (w ^. water)
+       else  w ^. water
 
 closeArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
 
@@ -306,7 +304,7 @@ shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
 
 move :: Int -> Int -> State World Bool
 move dx dy = do
-    r <- getRobotM
+    r <- gets getRobot
     let r' = shiftPoint r $ Vector dx dy
     c' <- getCellM r'
     case c' of
@@ -314,7 +312,7 @@ move dx dy = do
         Earth  -> moveBot r r'
         Lambda -> modify (lambdas ^%= (+1)) >> moveBot r r'
         Razor  -> modify (razors  ^%= (+1)) >> moveBot r r'
-        OLift  -> modify (ending ^= (Just Win)) >> moveBot r r'
+        OLift  -> modify (ending ^= Just Win) >> moveBot r r'
         TrEntry -> teleport r r'
         Rock   -> moveRock r r' dx c'
         HoRock -> moveRock r r' dx c'
@@ -333,7 +331,7 @@ move dx dy = do
         teleport r r' = do
             exitP <- gets $ flip (M.!) r' . (trampForward ^$)
             entryPs <- gets $ flip (M.!) exitP . (trampBackward ^$)
-            mapM_ (flip setCellM Empty) entryPs
+            mapM_ (`setCellM` Empty) entryPs
             moveBot r exitP
 
 
@@ -356,7 +354,6 @@ getCellM = gets . getCell
 setCellM :: Point -> Cell -> State World ()
 setCellM p c = modify $ setCell p c
 
-getRobotM :: State World Point
-getRobotM = gets $ getRobot
-
+endM :: Ending -> State World ()
+endM e = modify (ending ^= Just e)
 
