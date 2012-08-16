@@ -1,10 +1,4 @@
 {-# LANGUAGE TemplateHaskell #-}
--- TODO:
---  implement flooding
---  refactor: Point ==> newtype Vector Int; v = y*2^14 + x
---  refactor: type Cell = Char; should simplify code, impact on performance
---                              isn't clear
-
 module World (World, emptyWorld, parseWorld, drawWorld,
               turn, ending, razors,
               step,
