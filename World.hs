@@ -14,7 +14,7 @@ module World (World, emptyWorld, parseWorld, drawWorld,
 import Control.Arrow (second)
 import Control.Monad (liftM, when)
 import Control.Monad.State (State, execState, modify, get, gets)
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, fromJust)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
@@ -46,6 +46,7 @@ data World = World { _field         :: M.Map Point Cell
                    , _growth        :: Int
                    , _razors        :: Int
                    , _turn          :: Int
+                   , _underwater    :: Int -- number of steps underwater
                    , _lambdas       :: Int
                    , _ending        :: Maybe Ending
                    } deriving (Show)
@@ -65,6 +66,7 @@ emptyWorld =
           , _flooding = 0
           , _water = -1
           , _waterproof = 10
+          , _underwater = 0
           , _growth = 0
           , _razors = 0
           , _turn = 0
@@ -216,7 +218,7 @@ halfStep cmd = case cmd of
         rz <- gets (razors ^$)
         if rz > 0
            then do
-               r <- getRobot
+               r <- getRobotM
                changed <- mapM (\v -> shavePoint (shiftPoint r v)) closeArea
                modify $ (razors ^%= (flip (-) 1))
                return $ or changed
@@ -225,20 +227,29 @@ halfStep cmd = case cmd of
 
 update :: State World ()
 update = do
-    modify (turn ^%= (+1))
     s0 <- get
+    modify (turn ^%= (+1))
+    s0' <- get
     setsMap <- gets $ (sets ^$)
-    let tn = s0 ^. turn
-        bd = s0 ^. growth
+    let tn = s0' ^. turn
+        bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
         types = (if doGrow then (Beard:) else id) [Rock, HoRock, CLift]
         setsToCheck = map ((M.!) setsMap) types
+        Point _ robotY = getRobot s0
+        isUnderWater = waterLevel s0 >= robotY
+        isUnderWater' = waterLevel s0' >= robotY
     let toCheck = foldl' S.union S.empty $ setsToCheck
+    if isUnderWater || isUnderWater'
+       then (modify $ underwater ^%= (+1))
+       else (modify $ underwater ^= 0)
+    nUnder <- gets $ (underwater ^$)
+    when (nUnder > (s0 ^. waterproof)) (modify $ ending ^= Just Fail)
     mapM_ updateCell (S.toAscList toCheck)
   where
     updateCell p = do
         c <- gets $ getCell p
-        case (trace (show p ++ show c) c) of
+        case c of
           Rock   -> updateRock p c
           HoRock -> updateRock p c
           Beard  -> updateBeard p
@@ -281,6 +292,12 @@ update = do
                 in modify $ setCell p OLift
            else return ()
 
+waterLevel :: World -> Int
+waterLevel w =
+    if w ^. flooding > 0
+       then (w ^. water) + (w ^. turn) `div` (w ^. flooding)
+       else (w ^. water)
+
 closeArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
 
 shiftPoint :: Point -> Vector -> Point
@@ -288,7 +305,7 @@ shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
 
 move :: Int -> Int -> State World Bool
 move dx dy = do
-    r <- getRobot
+    r <- getRobotM
     let r' = shiftPoint r $ Vector dx dy
     c' <- gets $ getCell r'
     case c' of
@@ -319,10 +336,11 @@ move dx dy = do
             moveBot r exitP
 
 
-getRobot :: State World Point
-getRobot = do
-    Just s <- gets $ M.lookup Robot . (sets ^$)
-    return $ head $ S.toList s
+getRobotM :: State World Point
+getRobotM = gets $ getRobot
+
+getRobot :: World -> Point
+getRobot w = head $ S.toList $ fromJust $ M.lookup Robot (w ^. sets)
 
 getCell :: Point -> World -> Cell
 getCell p = M.findWithDefault Unknown p . (field ^$)
