@@ -210,9 +210,9 @@ halfStep cmd = case cmd of
                       CShave -> shave
   where
     shavePoint :: Point -> State World Bool
-    shavePoint p = do c <- gets $ getCell p
+    shavePoint p = do c <- getCellM p
                       if (c == Beard)
-                         then modify (setCell p Empty) >> return True
+                         then setCellM p Empty >> return True
                          else return False
     shave = do
         rz <- gets (razors ^$)
@@ -248,7 +248,7 @@ update = do
     mapM_ updateCell (S.toAscList toCheck)
   where
     updateCell p = do
-        c <- gets $ getCell p
+        c <- getCellM p
         case c of
           Rock   -> updateRock p c
           HoRock -> updateRock p c
@@ -256,7 +256,7 @@ update = do
           CLift  -> updateCLift p
         return ()
     updateRock p c = do
-        let rel dx dy = gets $ getCell (shiftPoint p $ Vector dx dy)
+        let rel dx dy = getCellM (shiftPoint p $ Vector dx dy)
         cR <-  rel   1    0
         cL <-  rel (-1)   0
         cD  <- rel   0  (-1)
@@ -271,25 +271,26 @@ update = do
       where isRock c = c == Rock || c == HoRock
             --isRock = (||) <$> (== Rock) <*> (== HoRock)
             breakRock HoRock p' = do
-                c <- gets $ getCell (shiftPoint p' $ Vector 0 (-1))
+                c <- getCellM (shiftPoint p' $ Vector 0 (-1))
                 return $ if c == Empty then HoRock else Lambda
             breakRock Rock p' = return Rock
             moveRock dx dy = let p'  = shiftPoint p  $ Vector dx dy
                                  p'' = shiftPoint p' $ Vector 0 (-1)
                              in do c'  <- breakRock c p'
-                                   c'' <- gets $ getCell p''
-                                   modify (setCell p' c' . setCell p Empty)
+                                   c'' <- getCellM p''
+                                   setCellM p Empty
+                                   setCellM p' c'
                                    when (c'' == Robot) (modify $ (ending ^= Just Fail))
     updateBeard p = mapM_ (\v -> growBeard (shiftPoint p v)) closeArea
-    growBeard p = do c <- gets $ getCell p
-                     when (c == Empty) (modify $ setCell p Beard)
+    growBeard p = do c <- getCellM p
+                     when (c == Empty) $ setCellM p Beard
 
     updateCLift p = do
         m <- gets $ (sets ^$)
         let nl = \c -> S.null $ (M.!) m c
         if nl Lambda && nl HoRock && not (nl CLift)
            then let p = head $ S.toList $ (M.!) m CLift
-                in modify $ setCell p OLift
+                in setCellM p OLift
            else return ()
 
 waterLevel :: World -> Int
@@ -307,7 +308,7 @@ move :: Int -> Int -> State World Bool
 move dx dy = do
     r <- getRobotM
     let r' = shiftPoint r $ Vector dx dy
-    c' <- gets $ getCell r'
+    c' <- getCellM r'
     case c' of
         Empty  -> moveBot r r'
         Earth  -> moveBot r r'
@@ -321,23 +322,20 @@ move dx dy = do
     --if c' `elem` [Earth, Empty, Lambda, OLift, TrampEntry, Razor]
     --    then][]]
   where moveBot :: Point -> Point -> State World Bool
-        moveBot r r' = modify (setCell r' Robot . setCell r Empty) >> return True
+        moveBot r r' = setCellM r Empty >> setCellM r' Robot >> return True
         moveRock r r' dx c'= do
             let r'' = shiftPoint r' $ Vector dx 0
-            c'' <- gets $ getCell r''
+            c'' <- getCellM r''
             if dx /= 0 && c'' == Empty
-               then modify (setCell r'' c' . setCell r' Robot . setCell r Empty) >>
+               then setCellM r Empty >> setCellM r' Robot >> setCellM r'' c' >>
                     return True
                else return False
         teleport r r' = do
             exitP <- gets $ flip (M.!) r' . (trampForward ^$)
             entryPs <- gets $ flip (M.!) exitP . (trampBackward ^$)
-            mapM_ (\p -> modify $ setCell p Empty) entryPs
+            mapM_ (flip setCellM Empty) entryPs
             moveBot r exitP
 
-
-getRobotM :: State World Point
-getRobotM = gets $ getRobot
 
 getRobot :: World -> Point
 getRobot w = head $ S.toList $ fromJust $ M.lookup Robot (w ^. sets)
@@ -351,4 +349,14 @@ setCell p c' w = w {_field = f', _sets = s''}
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
+
+getCellM :: Point -> State World Cell
+getCellM = gets . getCell
+
+setCellM :: Point -> Cell -> State World ()
+setCellM p c = modify $ setCell p c
+
+getRobotM :: State World Point
+getRobotM = gets $ getRobot
+
 
