@@ -10,7 +10,7 @@ main = do
     fData <- readFile mapFile
     let s = parseWorld fData
     draw s
-    let s' = foldl' (flip step) s $ take 1000 $ cycle [CUp, CDown]
+    let s' = foldl' step s $ take 100000 $ cycle [CUp, CDown]
     draw s'
 
     hSetBuffering stdin NoBuffering
@@ -20,7 +20,8 @@ main = do
     draw s = do
         putStrLn $ "Turn " ++ show (s ^. turn) ++ 
                    " / Razors " ++ show (s ^. razors) ++
-                   " / Ending " ++ show (s ^. ending)
+                   " / Ending " ++ show (s ^. ending) ++
+                   " / Comms "  ++ show (possibleCommands s)
         putStrLn $ unlines $ drawWorld s
     loop s = do
         cmdChar <- hGetChar stdin
@@ -34,7 +35,7 @@ main = do
                       'w' -> CWait
                       's' -> CShave
                       'a' -> CAbort
-                    s' = step cmd s 
+                    s' = step s cmd
                 in draw s' >> loop s'
            else loop s
 

@@ -1,13 +1,14 @@
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld,
               turn, ending, razors,
-              step,
+              step, possibleCommands, score,
+              commandToChar,
               Command (..)
              ) where
 
 import Control.Arrow (second)
 import Control.Monad (liftM, when)
-import Control.Monad.State (State, execState, modify, get, gets)
+import Control.Monad.State (State, execState, evalState, modify, get, gets)
 import Data.Char (isDigit)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
@@ -46,7 +47,7 @@ data World = World { _field         :: M.Map Point Cell
                    , _ending        :: Maybe Ending
                    } deriving (Show)
 
-data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort
+data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort deriving (Show)
 
 cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
 
@@ -186,7 +187,8 @@ commandToChar c = case c of
                         CShave -> 'S'
                         CAbort -> 'A'
 
-step c = execState $ do
+step :: World -> Command -> World
+step w c = flip execState w $ do
     notEnded <- gets $ isNothing . (ending ^$)
     when notEnded (halfStep c >> update)
 
@@ -285,6 +287,12 @@ update = do
            let p = head $ S.toList $ (M.!) m CLift
            in setCellM p OLift
 
+
+possibleCommands :: World -> [Command]
+possibleCommands w = filter (\c -> evalState (halfStep c) w)
+                             [CDown, CUp, CLeft, CRight, CShave, CWait]
+
+
 waterLevel :: World -> Int
 waterLevel w =
     if w ^. flooding > 0
@@ -351,3 +359,11 @@ setCellM p c = modify $ setCell p c
 endM :: Ending -> State World ()
 endM e = modify (ending ^= Just e)
 
+score :: World -> Int
+score w =
+    let k = case (ending ^$ w) of
+                Just Fail  -> 25
+                Nothing    -> 50
+                Just Abort -> 50
+                Just Win   -> 75
+    in (w ^. lambdas) * k - (w ^. turn)
