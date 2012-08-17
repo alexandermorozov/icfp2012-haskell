@@ -54,7 +54,7 @@ $(makeLenses [''World])
 pBits = 14
 pMask = 2^(pBits-1) - 1
 sMask = complement $ shift 1 (pBits-1) + shift 1 (pBits*2-1)
-packPoint x y = Point (shift (y .&. pMask) (pBits) + (x .&. pMask))
+packPoint x y = Point (shift (y .&. pMask) pBits + (x .&. pMask))
 addPoint (Point a) (Point b) = let s = a + b
                                in Point (s .&. sMask)
 -- unpacks as positive integers
@@ -238,7 +238,7 @@ update = do
     let tn = s0' ^. turn
         bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
-        types = (if doGrow then (Beard:) else id) [Rock, HoRock, CLift]
+        types = (if doGrow then (Beard:) else id) [CLift, Rock, HoRock]
         setsToCheck = map ((M.!) setsMap) types
         robotY = pointY $ getRobot s0
         isUnderWater = waterLevel s0 >= robotY
@@ -260,12 +260,13 @@ update = do
           CLift  -> updateCLift p
         return ()
     updateRock p c = do
-        let rel dx dy = getCellM (addPoint p $ packPoint dx dy)
-        cR <-  rel   1    0
-        cL <-  rel (-1)   0
-        cD  <- rel   0  (-1)
-        cDL <- rel (-1) (-1)
-        cDR <- rel   1  (-1)
+        s <- get
+        let rel dx dy = getCell (addPoint p $ packPoint dx dy) s
+            cR  = rel   1    0
+            cL  = rel (-1)   0
+            cD  = rel   0  (-1)
+            cDL = rel (-1) (-1)
+            cDR = rel   1  (-1)
         case True of
             _ | cD == Empty                                 -> moveRock   0  (-1)
               | isRock cD    && cR == Empty && cDR == Empty -> moveRock   1  (-1)
@@ -273,7 +274,6 @@ update = do
               | cD == Lambda && cR == Empty && cDR == Empty -> moveRock   1  (-1)
               | otherwise                                   -> return ()
       where isRock c = c == Rock || c == HoRock
-            --isRock = (||) <$> (== Rock) <*> (== HoRock)
             breakRock HoRock p' = do
                 c <- getCellM (addPoint p' $ packPoint 0 (-1))
                 return $ if c == Empty then HoRock else Lambda
@@ -368,7 +368,7 @@ endM e = modify (ending ^= Just e)
 
 score :: World -> Int
 score w =
-    let k = case (ending ^$ w) of
+    let k = case ending ^$ w of
                 Just Fail  -> 25
                 Nothing    -> 50
                 Just Abort -> 50
