@@ -3,12 +3,14 @@ module World (World, emptyWorld, parseWorld, drawWorld,
               turn, ending, razors,
               step, possibleCommands, score,
               commandToChar,
+              packPoint, addPoint, Point (..),
               Command (..)
              ) where
 
 import Control.Arrow (second)
 import Control.Monad (liftM, when)
 import Control.Monad.State (State, execState, evalState, modify, get, gets)
+import Data.Bits ((.&.), shift, complement)
 import Data.Char (isDigit)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
@@ -24,13 +26,9 @@ data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
           | TrEntry | TrExit | Unknown | Beard  | Razor | Lambda
           deriving (Eq, Ord, Show)
 
-data Point = Point Int Int deriving (Eq, Show)
-data Vector = Vector Int Int deriving (Eq, Show)
+newtype Point = Point Int deriving (Eq, Ord, Show)
 
 data Ending = Win | Abort | Fail deriving (Show)
-
-instance Ord Point where
-    compare (Point x1 y1) (Point x2 y2) = compare (y1, x1) (y2, x2)
 
 data World = World { _field         :: M.Map Point Cell
                    , _sets          :: M.Map Cell (S.Set Point)
@@ -52,6 +50,17 @@ data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort deriving (
 cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
 
 $(makeLenses [''World])
+
+pBits = 14
+pMask = 2^(pBits-1) - 1
+sMask = complement $ shift 1 (pBits-1) + shift 1 (pBits*2-1)
+packPoint x y = Point (shift (y .&. pMask) (pBits) + (x .&. pMask))
+addPoint (Point a) (Point b) = let s = a + b
+                               in Point (s .&. sMask)
+-- unpacks as positive integers
+pointX, pointY :: Point -> Int
+pointX (Point a) = a .&. pMask
+pointY (Point a) = shift a (-pBits) .&. pMask
 
 emptyWorld :: World
 emptyWorld =
@@ -102,7 +111,7 @@ parseWorld rawData = flip execState emptyWorld $ do
     cellList fLines = helper 1 1 (reverse fLines)
         where helper x y [[]] = []
               helper x y ([]:lines) = helper 1 (y+1) lines
-              helper x y ((c:rest):ls) = (Point x y, c) : helper (x+1) y (rest:ls)
+              helper x y ((c:rest):ls) = (packPoint x y, c) : helper (x+1) y (rest:ls)
     parseField fLines = M.fromList $ map (second toCell) (cellList fLines)
     toCell c =
          case c of
@@ -128,7 +137,7 @@ parseWorld rawData = flip execState emptyWorld $ do
         where cells = cellList fLines
               isTramp x = isTrampEntry x || isTrampExit x
               all = map swap $ filter (isTramp . snd) cells
-              get a = fromMaybe (Point (-1) (-1)) (lookup a all)
+              get a = fromMaybe (packPoint (-1) (-1)) (lookup a all)
               getMapping (a, b) = (get a, get b)
               forward = M.fromList $ map getMapping routes
 
@@ -145,10 +154,10 @@ recache w = (sets ^= foldr add initial (M.toList $ w ^. field)) w
 drawWorld :: World -> [String]
 drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
   where grouped = groupBy sameLine
-        sameLine (Point _ y1, _) (Point _ y2, _) = y1 == y2
+        sameLine (a, _) (b, _) = pointY a == pointY b
         renderLine s i [] = reverse s
-        renderLine s i axs@((Point x _, c):xs)
-             | x == i = renderLine (toChar c:s) (x+1) xs
+        renderLine s i axs@((p, c):xs)
+             | pointX p == i = renderLine (toChar c:s) (pointX p + 1) xs
              | otherwise = renderLine (' ':s) (i+1) axs
         toChar c = case c of
                         Empty -> ' '
@@ -214,7 +223,7 @@ halfStep cmd = case cmd of
         if rz > 0
            then do
                r <- gets getRobot
-               changed <- mapM (shavePoint . shiftPoint r) closeArea
+               changed <- mapM (shavePoint . addPoint r) closeArea
                modify $ razors ^%= flip (-) 1
                return $ or changed
            else
@@ -231,7 +240,7 @@ update = do
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
         types = (if doGrow then (Beard:) else id) [Rock, HoRock, CLift]
         setsToCheck = map ((M.!) setsMap) types
-        Point _ robotY = getRobot s0
+        robotY = pointY $ getRobot s0
         isUnderWater = waterLevel s0 >= robotY
         isUnderWater' = waterLevel s0' >= robotY
     let toCheck = foldl' S.union S.empty setsToCheck
@@ -251,7 +260,7 @@ update = do
           CLift  -> updateCLift p
         return ()
     updateRock p c = do
-        let rel dx dy = getCellM (shiftPoint p $ Vector dx dy)
+        let rel dx dy = getCellM (addPoint p $ packPoint dx dy)
         cR <-  rel   1    0
         cL <-  rel (-1)   0
         cD  <- rel   0  (-1)
@@ -266,17 +275,17 @@ update = do
       where isRock c = c == Rock || c == HoRock
             --isRock = (||) <$> (== Rock) <*> (== HoRock)
             breakRock HoRock p' = do
-                c <- getCellM (shiftPoint p' $ Vector 0 (-1))
+                c <- getCellM (addPoint p' $ packPoint 0 (-1))
                 return $ if c == Empty then HoRock else Lambda
             breakRock Rock p' = return Rock
-            moveRock dx dy = let p'  = shiftPoint p  $ Vector dx dy
-                                 p'' = shiftPoint p' $ Vector 0 (-1)
+            moveRock dx dy = let p'  = addPoint p  $ packPoint dx dy
+                                 p'' = addPoint p' $ packPoint 0 (-1)
                              in do c'  <- breakRock c p'
                                    c'' <- getCellM p''
                                    setCellM p Empty
                                    setCellM p' c'
                                    when (c'' == Robot) (endM Fail)
-    updateBeard p = mapM_ (growBeard . shiftPoint p) closeArea
+    updateBeard p = mapM_ (growBeard . addPoint p) closeArea
     growBeard p = do c <- getCellM p
                      when (c == Empty) $ setCellM p Beard
 
@@ -299,15 +308,13 @@ waterLevel w =
        then (w ^. water) + (w ^. turn) `div` (w ^. flooding)
        else  w ^. water
 
-closeArea = [Vector dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
+closeArea = [packPoint dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
 
-shiftPoint :: Point -> Vector -> Point
-shiftPoint (Point x y) (Vector dx dy) = Point (x + dx) (y + dy)
 
 move :: Int -> Int -> State World Bool
 move dx dy = do
     r <- gets getRobot
-    let r' = shiftPoint r $ Vector dx dy
+    let r' = addPoint r $ packPoint dx dy
     c' <- getCellM r'
     case c' of
         Empty  -> moveBot r r'
@@ -324,7 +331,7 @@ move dx dy = do
   where moveBot :: Point -> Point -> State World Bool
         moveBot r r' = setCellM r Empty >> setCellM r' Robot >> return True
         moveRock r r' dx c'= do
-            let r'' = shiftPoint r' $ Vector dx 0
+            let r'' = addPoint r' $ packPoint dx 0
             c'' <- getCellM r''
             if dx /= 0 && c'' == Empty
                then setCellM r Empty >> setCellM r' Robot >> setCellM r'' c' >>

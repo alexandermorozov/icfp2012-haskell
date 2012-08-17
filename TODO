@@ -1,4 +1,3 @@
 - Validate emulator
-- Point ==> newtype Vector Int; v = y*2^14 + x
 - type Cell = Char; should simplify code, impact on performance isn't clear
 

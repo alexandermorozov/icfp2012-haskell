@@ -36,7 +36,7 @@ main = do
                       's' -> CShave
                       'a' -> CAbort
                     s' = step s cmd
-                in draw s' >> loop s'
+                in draw s' >> print s' >> loop s'
            else loop s
 
 
