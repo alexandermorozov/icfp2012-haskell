@@ -32,6 +32,7 @@ data Ending = Win | Abort | Fail deriving (Show)
 
 data World = World { _field         :: M.Map Point Cell
                    , _sets          :: M.Map Cell (S.Set Point)
+                   , _maybeFalling  :: S.Set Point -- stones that may fall on update
                    , _trampForward  :: M.Map Point Point
                    , _trampBackward :: M.Map Point [Point]
                    , _flooding      :: Int
@@ -69,11 +70,14 @@ pointX, pointY :: Point -> Int
 pointX (Point a) = a .&. pMask
 pointY (Point a) = shift a (-pBits) .&. pMask
 
+unpackPoint :: Point -> (Int, Int)
+unpackPoint p = (pointX p, pointY p)
 
 emptyWorld :: World
 emptyWorld =
     World { _field = M.empty
           , _sets = M.empty
+          , _maybeFalling = S.empty
           , _trampForward = M.empty
           , _trampBackward = M.empty
           , _flooding = 0
@@ -154,7 +158,9 @@ parseWorld rawData = flip execState emptyWorld $ do
         where ins (src, dst) = M.insertWith (++) dst [src]
 
 recache :: World -> World
-recache w = (sets ^= foldr add initial (M.toList $ w ^. field)) w
+recache w = let sets' = foldr add initial (M.toList $ w ^. field)
+                falling = S.union ((M.!) sets' Rock) ((M.!) sets' HoRock)
+            in (sets ^= sets') $ (maybeFalling ^= falling) w
   where add (p, c) = M.adjust (S.insert p) c
         initial = foldr (`M.insert` S.empty) M.empty $
                                           S.toList cachedCellTypes
@@ -246,27 +252,29 @@ update = do
     let tn = s0' ^. turn
         bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
-        types = (if doGrow then (Beard:) else id) [CLift, Rock, HoRock]
-        setsToCheck = map ((M.!) setsMap) types
+        -- types = (if doGrow then (Beard:) else id) [CLift, Rock, HoRock]
+        types = (if doGrow then (Beard:) else id) [CLift]
+        setsToCheck = (s0 ^. maybeFalling) : (map ((M.!) setsMap) types)
         robotY = pointY $ getRobot s0
         isUnderWater = waterLevel s0 >= robotY
         isUnderWater' = waterLevel s0' >= robotY
-    let toCheck = foldl' S.union S.empty setsToCheck
+        toCheck = foldl' S.union S.empty setsToCheck
+    modify $ (maybeFalling ^= S.empty)
     if isUnderWater || isUnderWater'
        then modify $ underwater ^%= (+1)
        else modify $ underwater ^= 0
     nUnder <- gets (underwater ^$)
     when (nUnder > (s0 ^. waterproof)) (endM Fail)
-    mapM_ updateCell (S.toAscList toCheck)
+    mapM_ (updateCell s0) (S.toAscList toCheck)
   where
-    updateCell p = do
-        c <- getCellM p
+    updateCell s0 p = do
+        let c = getCell p s0
         case c of
           Rock   -> updateRock p c
           HoRock -> updateRock p c
           Beard  -> updateBeard p
           CLift  -> updateCLift p
-        return ()
+          otherwise -> return () -- stones from some points may be already moved out
     updateRock p c = do
         s <- get
         let rel dx dy = getCell (addPoint p $ packPoint dx dy) s
@@ -359,11 +367,16 @@ getCell :: Point -> World -> Cell
 getCell p = M.findWithDefault Unknown p . (field ^$)
 
 setCell :: Point -> Cell -> World -> World
-setCell p c' w = w {_field = f', _sets = s''}
+setCell p c' w = w {_field = f', _sets = s'', _maybeFalling = mFalling}
   where f'  = M.insert p c' (w ^. field)
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
+        fallArea = map (addPoint p . uncurry packPoint)
+                               [(0,0),(-1,0),(-1,1),(0,1),(1,1),(1,0)]
+        fallList = [p | p <- fallArea, isRock p]
+        mFalling = foldl' (flip S.insert) (w ^. maybeFalling) fallList
+        isRock p = let c = getCell p w in c == Rock || c == HoRock
 
 getCellM :: Point -> State World Cell
 getCellM = gets . getCell
