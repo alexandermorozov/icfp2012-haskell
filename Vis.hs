@@ -3,6 +3,8 @@ import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.List (foldl')
 import System.IO
 import System.Environment (getArgs)
+import Text.Printf
+
 import World
 
 main = do
@@ -15,10 +17,10 @@ main = do
     loop s
   where
     draw s = do
-        putStrLn $ "Turn " ++ show (s ^. turn) ++ 
-                   " / Razors " ++ show (s ^. razors) ++
-                   " / Ending " ++ show (s ^. ending) ++
-                   " / Comms "  ++ show (possibleCommands s)
+        printf "Turn %d, Score %d, Rz %d, End %s, RFall %s, Hash %016X, Comms %s\n"
+                  (s ^. turn) (score s) (s ^. razors) (show $ s ^. ending)
+                  (show $ s ^. rockFell)
+                  (s ^. fieldHash) (map commandToChar $ possibleCommands s)
         putStrLn $ unlines $ drawWorld s
     loop s = do
         cmdChar <- getChar
@@ -33,7 +35,7 @@ main = do
                       's' -> CShave
                       'a' -> CAbort
                     s' = step s cmd
-                in draw s' >> print s' >> loop s'
+                in draw s' >> loop s'
            else loop s
 
 

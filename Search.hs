@@ -38,7 +38,7 @@ main = do
     [mapFile] <- getArgs
     fData <- readFile mapFile
     let s = parseWorld fData
-    printVerbose $ limitedDepth 11 s
+    printVerbose $ limitedDepth 12 s
     --print $ limitedDepth 6 s
 
 

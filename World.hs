@@ -1,8 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 module World (World, emptyWorld, parseWorld, drawWorld,
-              turn, ending, razors,
+              turn, ending, razors, fieldHash, rockFell,
               step, possibleCommands, score,
-              commandToChar,
+              commandToChar, cellToChar,
               packPoint, addPoint, Point (..),
               Command (..)
              ) where
@@ -10,15 +10,17 @@ module World (World, emptyWorld, parseWorld, drawWorld,
 import Control.Arrow (second)
 import Control.Monad (liftM, when)
 import Control.Monad.State (State, execState, evalState, modify, get, gets)
-import Data.Bits ((.&.), shift, complement)
+import Data.Bits ((.&.), shift, complement, xor)
 import Data.Char (isDigit)
+import Data.Digest.Murmur64 (asWord64, hash64Add, hash64)
 import Data.List (groupBy, span, foldl')
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.Lens.Template (makeLenses)
 import qualified Data.Map as M
-import Data.Maybe (isNothing, fromJust, fromMaybe)
+import Data.Maybe (isNothing, isJust, fromJust, fromMaybe)
 import qualified Data.Set as S
 import Data.Tuple (swap)
+import Data.Word (Word64)
 import Debug.Trace (trace)
 import System.IO (stdin, Handle, hGetContents)
 
@@ -31,18 +33,20 @@ newtype Point = Point Int deriving (Eq, Ord, Show)
 data Ending = Win | Abort | Fail deriving (Show)
 
 data World = World { _field         :: M.Map Point Cell
+                   , _fieldHash     :: !Word64
                    , _sets          :: M.Map Cell (S.Set Point)
                    , _maybeFalling  :: S.Set Point -- stones that may fall on update
+                   , _rockFell     :: Bool -- a stone fell in prev turn
                    , _trampForward  :: M.Map Point Point
                    , _trampBackward :: M.Map Point [Point]
-                   , _flooding      :: Int
-                   , _water         :: Int
-                   , _waterproof    :: Int
-                   , _growth        :: Int
-                   , _razors        :: Int
-                   , _turn          :: Int
-                   , _underwater    :: Int -- number of steps underwater
-                   , _lambdas       :: Int
+                   , _flooding      :: !Int
+                   , _water         :: !Int
+                   , _waterproof    :: !Int
+                   , _growth        :: !Int
+                   , _razors        :: !Int
+                   , _turn          :: !Int
+                   , _underwater    :: !Int -- number of steps underwater
+                   , _lambdas       :: !Int
                    , _ending        :: Maybe Ending
                    } deriving (Show)
 
@@ -76,8 +80,10 @@ unpackPoint p = (pointX p, pointY p)
 emptyWorld :: World
 emptyWorld =
     World { _field = M.empty
+          , _fieldHash = 0
           , _sets = M.empty
           , _maybeFalling = S.empty
+          , _rockFell = True        -- really unknown
           , _trampForward = M.empty
           , _trampBackward = M.empty
           , _flooding = 0
@@ -171,23 +177,25 @@ drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. fiel
         sameLine (a, _) (b, _) = pointY a == pointY b
         renderLine s i [] = reverse s
         renderLine s i axs@((p, c):xs)
-             | pointX p == i = renderLine (toChar c:s) (pointX p + 1) xs
+             | pointX p == i = renderLine (cellToChar c:s) (pointX p + 1) xs
              | otherwise = renderLine (' ':s) (i+1) axs
-        toChar c = case c of
-                        Empty -> ' '
-                        Earth -> '.'
-                        Rock -> '*'
-                        HoRock -> '@'
-                        Wall -> '#'
-                        Robot -> 'R'
-                        OLift -> 'O'
-                        CLift -> 'L'
-                        TrEntry -> 'T'
-                        TrExit -> 't'
-                        Unknown -> '?'
-                        Beard -> 'W'
-                        Razor -> '!'
-                        Lambda -> '\\'
+
+cellToChar :: Cell -> Char
+cellToChar c = case c of
+                Empty -> ' '
+                Earth -> '.'
+                Rock -> '*'
+                HoRock -> '@'
+                Wall -> '#'
+                Robot -> 'R'
+                OLift -> 'O'
+                CLift -> 'L'
+                TrEntry -> 'T'
+                TrExit -> 't'
+                Unknown -> '?'
+                Beard -> 'W'
+                Razor -> '!'
+                Lambda -> '\\'
 
 charToCommand :: Char -> Command
 charToCommand ch = case ch of
@@ -267,6 +275,7 @@ update = do
        else modify $ underwater ^= 0
     nUnder <- gets (underwater ^$)
     when (nUnder > (s0 ^. waterproof)) (endM Fail)
+    modify $ rockFell ^= False
     mapM_ (updateCell s0) (S.toAscList toCheck)
   where
     updateCell s0 p = do
@@ -302,6 +311,7 @@ update = do
                                    c'' <- getCellM p''
                                    setCellM p Empty
                                    setCellM p' c'
+                                   modify $ rockFell ^= True
                                    when (c'' == Robot) (endM Fail)
     updateBeard p = mapM_ (growBeard . addPoint p) closeArea
     growBeard p = do c <- getCellM p
@@ -315,10 +325,20 @@ update = do
            in setCellM p OLift
 
 
+-- Returns sensible moves to try in the next turn.
+-- If no stone fell at prev turn and robot just waits, then nothing
+--   good is expected to happen. This kind of prunning should reduce
+--   branching factor in most cases by 1.
+-- TODO: maybe change ordering
 possibleCommands :: World -> [Command]
-possibleCommands w = filter (\c -> evalState (halfStep c) w)
-                             [CDown, CUp, CLeft, CRight, CShave, CWait]
-
+possibleCommands w =
+    if isJust (w ^. ending)
+       then []
+       else let cmds = filter (\c -> evalState (halfStep c) w)
+                           [CShave, CDown, CUp, CLeft, CRight]
+            in if (w ^. rockFell)
+                  then cmds ++ [CWait]
+                  else cmds ++ [CWait]
 
 waterLevel :: World -> Int
 waterLevel w =
@@ -369,11 +389,16 @@ getCell :: Point -> World -> Cell
 getCell p = M.findWithDefault Unknown p . (field ^$)
 
 setCell :: Point -> Cell -> World -> World
-setCell p c' w = w {_field = f', _sets = s'', _maybeFalling = mFalling}
+setCell p c' w = w { _field = f'
+                   , _fieldHash = hash'
+                   , _sets = s''
+                   , _maybeFalling = mFalling
+                   }
   where f'  = M.insert p c' (w ^. field)
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
+        hash' = (w ^. fieldHash) `xor` (cellHash p c) `xor` (cellHash p c')
         toPoints = map (addPoint p . uncurry packPoint)
         fallArea = case c of -- here may be some extra points
             _ | c' == Empty -> toPoints [(-1,0),(-1,1),(0,1),(1,1),(1,0)]
@@ -387,6 +412,9 @@ getCellM = gets . getCell
 
 setCellM :: Point -> Cell -> State World ()
 setCellM p c = modify $ setCell p c
+
+cellHash :: Point -> Cell -> Word64
+cellHash (Point p) c = asWord64 $ hash64Add p $ hash64 $ cellToChar c
 
 endM :: Ending -> State World ()
 endM e = modify (ending ^= Just e)
