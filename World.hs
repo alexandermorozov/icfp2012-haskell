@@ -252,13 +252,15 @@ update = do
     let tn = s0' ^. turn
         bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
-        -- types = (if doGrow then (Beard:) else id) [CLift, Rock, HoRock]
         types = (if doGrow then (Beard:) else id) [CLift]
-        setsToCheck = (s0 ^. maybeFalling) : (map ((M.!) setsMap) types)
+        mergedSets ts = foldl' S.union S.empty $ map ((M.!) setsMap) ts
+        -- falling = S.intersection (s0 ^. maybeFalling) (mergedSets [Rock, HoRock])
+        -- this way is faster:
+        falling = s0 ^. maybeFalling
+        toCheck = S.union falling (mergedSets types)
         robotY = pointY $ getRobot s0
         isUnderWater = waterLevel s0 >= robotY
         isUnderWater' = waterLevel s0' >= robotY
-        toCheck = foldl' S.union S.empty setsToCheck
     modify $ (maybeFalling ^= S.empty)
     if isUnderWater || isUnderWater'
        then modify $ underwater ^%= (+1)
@@ -372,11 +374,13 @@ setCell p c' w = w {_field = f', _sets = s'', _maybeFalling = mFalling}
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
-        fallArea = map (addPoint p . uncurry packPoint)
-                               [(0,0),(-1,0),(-1,1),(0,1),(1,1),(1,0)]
-        fallList = [p | p <- fallArea, isRock p]
-        mFalling = foldl' (flip S.insert) (w ^. maybeFalling) fallList
-        isRock p = let c = getCell p w in c == Rock || c == HoRock
+        toPoints = map (addPoint p . uncurry packPoint)
+        fallArea = case c of -- here may be some extra points
+            _ | c' == Empty -> toPoints [(-1,0),(-1,1),(0,1),(1,1),(1,0)]
+              | c' == Rock || c' == HoRock -> toPoints [(0,0)]
+              | c' == Lambda               -> toPoints [(0,1)]
+              | otherwise                  -> []
+        mFalling = foldl' (flip S.insert) (w ^. maybeFalling) fallArea
 
 getCellM :: Point -> State World Cell
 getCellM = gets . getCell
