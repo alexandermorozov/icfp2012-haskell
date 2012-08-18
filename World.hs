@@ -51,16 +51,24 @@ cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, L
 
 $(makeLenses [''World])
 
+
+pBits, pMask, sMask :: Int
 pBits = 14
 pMask = 2^(pBits-1) - 1
 sMask = complement $ shift 1 (pBits-1) + shift 1 (pBits*2-1)
+
+packPoint :: Int -> Int -> Point
 packPoint x y = Point (shift (y .&. pMask) pBits + (x .&. pMask))
+
+addPoint :: Point -> Point -> Point
 addPoint (Point a) (Point b) = let s = a + b
                                in Point (s .&. sMask)
--- unpacks as positive integers
+
+-- unpacks only as positive integers
 pointX, pointY :: Point -> Int
 pointX (Point a) = a .&. pMask
 pointY (Point a) = shift a (-pBits) .&. pMask
+
 
 emptyWorld :: World
 emptyWorld =
