@@ -2,7 +2,6 @@
 module World (World, emptyWorld, parseWorld, drawWorld,
               turn, ending, razors,
               step, possibleCommands, score,
-              commandToChar,
               packPoint, addPoint, Point (..),
               Command (..)
              ) where
@@ -22,9 +21,7 @@ import Data.Tuple (swap)
 import Debug.Trace (trace)
 import System.IO (stdin, Handle, hGetContents)
 
-data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
-          | TrEntry | TrExit | Unknown | Beard  | Razor | Lambda
-          deriving (Eq, Ord, Show)
+type Cell = Char
 
 newtype Point = Point Int deriving (Eq, Ord, Show)
 
@@ -45,9 +42,9 @@ data World = World { _field         :: M.Map Point Cell
                    , _ending        :: Maybe Ending
                    } deriving (Show)
 
-data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort deriving (Show)
+type Command = Char
 
-cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
+cachedCellTypes = "*@ROCW!\\"
 
 $(makeLenses [''World])
 
@@ -121,25 +118,12 @@ parseWorld rawData = flip execState emptyWorld $ do
               helper x y ([]:lines) = helper 1 (y+1) lines
               helper x y ((c:rest):ls) = (packPoint x y, c) : helper (x+1) y (rest:ls)
     parseField fLines = M.fromList $ map (second toCell) (cellList fLines)
-    toCell c =
-         case c of
-             '.' -> Earth
-             ' ' -> Empty
-             '*' -> Rock
-             '@' -> HoRock
-             '#' -> Wall
-             'R' -> Robot
-             'O' -> OLift
-             'L' -> CLift
-             '\\'-> Lambda
-             'W' -> Beard
-             '!' -> Razor
-             x | isTrampEntry x -> TrEntry
-             x | isTrampExit  x -> TrExit
-             otherwise -> Unknown
+    toCell c = case c of
+                 _ | c `elem` " *@#ROL\\W!." -> c
+                   | isTrampEntry c          -> 'T'
+                   | isTrampExit c           -> 't'
     isTrampEntry c = c >= 'A' && c <= 'I'
-    isTrampExit    = isDigit
-
+    isTrampExit = isDigit
     getForwardTramp :: [String] -> [(Char, Char)] -> M.Map Point Point
     getForwardTramp fLines routes = forward
         where cells = cellList fLines
@@ -156,8 +140,7 @@ parseWorld rawData = flip execState emptyWorld $ do
 recache :: World -> World
 recache w = (sets ^= foldr add initial (M.toList $ w ^. field)) w
   where add (p, c) = M.adjust (S.insert p) c
-        initial = foldr (`M.insert` S.empty) M.empty $
-                                          S.toList cachedCellTypes
+        initial = foldr (`M.insert` S.empty) M.empty cachedCellTypes
 
 drawWorld :: World -> [String]
 drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
@@ -165,44 +148,8 @@ drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. fiel
         sameLine (a, _) (b, _) = pointY a == pointY b
         renderLine s i [] = reverse s
         renderLine s i axs@((p, c):xs)
-             | pointX p == i = renderLine (toChar c:s) (pointX p + 1) xs
+             | pointX p == i = renderLine (c:s) (pointX p + 1) xs
              | otherwise = renderLine (' ':s) (i+1) axs
-        toChar c = case c of
-                        Empty -> ' '
-                        Earth -> '.'
-                        Rock -> '*'
-                        HoRock -> '@'
-                        Wall -> '#'
-                        Robot -> 'R'
-                        OLift -> 'O'
-                        CLift -> 'L'
-                        TrEntry -> 'T'
-                        TrExit -> 't'
-                        Unknown -> '?'
-                        Beard -> 'W'
-                        Razor -> '!'
-                        Lambda -> '\\'
-
-charToCommand :: Char -> Command
-charToCommand ch = case ch of
-                        'L' -> CLeft
-                        'R' -> CRight
-                        'D' -> CDown
-                        'U' -> CUp
-                        'W' -> CWait
-                        'S' -> CShave
-                        'A' -> CAbort
-                        otherwise -> undefined -- input should already be validated...
-
-commandToChar :: Command -> Char
-commandToChar c = case c of
-                        CLeft  -> 'L'
-                        CRight -> 'R'
-                        CDown  -> 'D'
-                        CUp    -> 'U'
-                        CWait  -> 'W'
-                        CShave -> 'S'
-                        CAbort -> 'A'
 
 step :: World -> Command -> World
 step w c = flip execState w $ do
@@ -213,18 +160,18 @@ step w c = flip execState w $ do
 --         False, if moving failed or no beard was actually shaved
 halfStep :: Command -> State World Bool
 halfStep cmd = case cmd of
-                      CLeft  -> move (-1)   0
-                      CRight -> move   1    0
-                      CUp    -> move   0    1
-                      CDown  -> move   0  (-1)
-                      CAbort -> endM Abort >> return False
-                      CWait  -> return True
-                      CShave -> shave
+                      'L' -> move (-1)   0
+                      'R' -> move   1    0
+                      'U' -> move   0    1
+                      'D' -> move   0  (-1)
+                      'A' -> endM Abort >> return False
+                      'W' -> return True
+                      'S' -> shave
   where
     shavePoint :: Point -> State World Bool
     shavePoint p = do c <- getCellM p
-                      if c == Beard
-                         then setCellM p Empty >> return True
+                      if c == 'W'
+                         then setCellM p ' ' >> return True
                          else return False
     shave = do
         rz <- gets (razors ^$)
@@ -246,7 +193,7 @@ update = do
     let tn = s0' ^. turn
         bd = s0' ^. growth
         doGrow = bd > 0 && (tn `mod` bd == 0) && tn > 1
-        types = (if doGrow then (Beard:) else id) [CLift, Rock, HoRock]
+        types = (if doGrow then ('W':) else id) "C*@"
         setsToCheck = map ((M.!) setsMap) types
         robotY = pointY $ getRobot s0
         isUnderWater = waterLevel s0 >= robotY
@@ -262,10 +209,10 @@ update = do
     updateCell p = do
         c <- getCellM p
         case c of
-          Rock   -> updateRock p c
-          HoRock -> updateRock p c
-          Beard  -> updateBeard p
-          CLift  -> updateCLift p
+          '*' -> updateRock p c
+          '@' -> updateRock p c
+          'W' -> updateBeard p
+          'C' -> updateCLift p
         return ()
     updateRock p c = do
         s <- get
@@ -276,39 +223,36 @@ update = do
             cDL = rel (-1) (-1)
             cDR = rel   1  (-1)
         case True of
-            _ | cD == Empty                                 -> moveRock   0  (-1)
-              | isRock cD    && cR == Empty && cDR == Empty -> moveRock   1  (-1)
-              | isRock cD    && cL == Empty && cDL == Empty -> moveRock (-1) (-1)
-              | cD == Lambda && cR == Empty && cDR == Empty -> moveRock   1  (-1)
+            _ | cD == ' '                                 -> moveRock   0  (-1)
+              | isRock cD  && cR == ' ' && cDR == ' ' -> moveRock   1  (-1)
+              | isRock cD  && cL == ' ' && cDL == ' ' -> moveRock (-1) (-1)
+              | cD == '\\' && cR == ' ' && cDR == ' ' -> moveRock   1  (-1)
               | otherwise                                   -> return ()
-      where isRock c = c == Rock || c == HoRock
-            breakRock HoRock p' = do
+      where isRock c = c `elem` "@*"
+            breakRock '@' p' = do
                 c <- getCellM (addPoint p' $ packPoint 0 (-1))
-                return $ if c == Empty then HoRock else Lambda
-            breakRock Rock p' = return Rock
+                return $ if c == ' ' then '@' else '\\'
+            breakRock '*' p' = return '*'
             moveRock dx dy = let p'  = addPoint p  $ packPoint dx dy
                                  p'' = addPoint p' $ packPoint 0 (-1)
                              in do c'  <- breakRock c p'
                                    c'' <- getCellM p''
-                                   setCellM p Empty
+                                   setCellM p ' '
                                    setCellM p' c'
-                                   when (c'' == Robot) (endM Fail)
+                                   when (c'' == 'R') (endM Fail)
     updateBeard p = mapM_ (growBeard . addPoint p) closeArea
     growBeard p = do c <- getCellM p
-                     when (c == Empty) $ setCellM p Beard
+                     when (c == ' ') $ setCellM p 'W'
 
     updateCLift p = do
         m <- gets (sets ^$)
         let nl c = S.null $ (M.!) m c
-        when (nl Lambda && nl HoRock && not (nl CLift)) $
-           let p = head $ S.toList $ (M.!) m CLift
-           in setCellM p OLift
-
+        when (nl '\\' && nl '@' && not (nl 'C')) $
+           let p = head $ S.toList $ (M.!) m 'C'
+           in setCellM p 'O'
 
 possibleCommands :: World -> [Command]
-possibleCommands w = filter (\c -> evalState (halfStep c) w)
-                             [CDown, CUp, CLeft, CRight, CShave, CWait]
-
+possibleCommands w = filter (\c -> evalState (halfStep c) w) "DULRSW"
 
 waterLevel :: World -> Int
 waterLevel w =
@@ -325,38 +269,38 @@ move dx dy = do
     let r' = addPoint r $ packPoint dx dy
     c' <- getCellM r'
     case c' of
-        Empty  -> moveBot r r'
-        Earth  -> moveBot r r'
-        Lambda -> modify (lambdas ^%= (+1)) >> moveBot r r'
-        Razor  -> modify (razors  ^%= (+1)) >> moveBot r r'
-        OLift  -> modify (ending ^= Just Win) >> moveBot r r'
-        TrEntry -> teleport r r'
-        Rock   -> moveRock r r' dx c'
-        HoRock -> moveRock r r' dx c'
+        ' '  -> moveBot r r'
+        '.'  -> moveBot r r'
+        '\\' -> modify (lambdas ^%= (+1)) >> moveBot r r'
+        '!'  -> modify (razors  ^%= (+1)) >> moveBot r r'
+        'O'  -> modify (ending ^= Just Win) >> moveBot r r'
+        'T' -> teleport r r'
+        '*'   -> moveRock r r' dx c'
+        '@' -> moveRock r r' dx c'
         otherwise -> return False
     --if c' `elem` [Earth, Empty, Lambda, OLift, TrampEntry, Razor]
     --    then][]]
   where moveBot :: Point -> Point -> State World Bool
-        moveBot r r' = setCellM r Empty >> setCellM r' Robot >> return True
+        moveBot r r' = setCellM r ' ' >> setCellM r' 'R' >> return True
         moveRock r r' dx c'= do
             let r'' = addPoint r' $ packPoint dx 0
             c'' <- getCellM r''
-            if dx /= 0 && c'' == Empty
-               then setCellM r Empty >> setCellM r' Robot >> setCellM r'' c' >>
+            if dx /= 0 && c'' == ' '
+               then setCellM r ' ' >> setCellM r' 'R' >> setCellM r'' c' >>
                     return True
                else return False
         teleport r r' = do
             exitP <- gets $ flip (M.!) r' . (trampForward ^$)
             entryPs <- gets $ flip (M.!) exitP . (trampBackward ^$)
-            mapM_ (`setCellM` Empty) entryPs
+            mapM_ (`setCellM` ' ') entryPs
             moveBot r exitP
 
 
 getRobot :: World -> Point
-getRobot w = head $ S.toList $ fromJust $ M.lookup Robot (w ^. sets)
+getRobot w = head $ S.toList $ fromJust $ M.lookup 'R' (w ^. sets)
 
 getCell :: Point -> World -> Cell
-getCell p = M.findWithDefault Unknown p . (field ^$)
+getCell p = M.findWithDefault '?' p . (field ^$)
 
 setCell :: Point -> Cell -> World -> World
 setCell p c' w = w {_field = f', _sets = s''}

@@ -30,7 +30,7 @@ printVerbose xs = do
             printf "%.0f Op/s, %d Ops" ops n
         helper t0 ((c', p'):xs) c n =
             if c' > c
-                then putStrLn (show c' ++ " " ++ (map commandToChar $ reverse p')) >>
+                then putStrLn (show c' ++ " " ++ reverse p') >>
                      (helper t0 xs c' $! (n+1))
                 else helper t0 xs c $! (n+1)
 
@@ -38,7 +38,7 @@ main = do
     [mapFile] <- getArgs
     fData <- readFile mapFile
     let s = parseWorld fData
-    printVerbose $ limitedDepth 10 s
+    printVerbose $ limitedDepth 11 s
     --print $ limitedDepth 6 s
 
 
