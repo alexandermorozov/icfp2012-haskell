@@ -338,7 +338,7 @@ possibleCommands w =
                            [CShave, CDown, CUp, CLeft, CRight]
             in if (w ^. rockFell)
                   then cmds ++ [CWait]
-                  else cmds ++ [CWait]
+                  else cmds
 
 waterLevel :: World -> Int
 waterLevel w =
