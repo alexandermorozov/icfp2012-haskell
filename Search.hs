@@ -7,8 +7,8 @@ import System.CPUTime
 import Text.Printf (printf)
 import World
 
-limitedDepth :: Int -> World -> [(Int, [Command], World)]
-limitedDepth depth w = (0,[],w) : helper depth w []
+limitedDepth :: Int -> World -> [(Int, [Command])]
+limitedDepth depth w = (0,[]) : helper depth w []
   where
     helper 0 _ _ = []
     helper depth w rpath =  
@@ -17,10 +17,10 @@ limitedDepth depth w = (0,[],w) : helper depth w []
             scores  = map score ws
             rpaths  = map (:rpath) cmds
             future  = zipWith (helper (depth-1)) ws rpaths
-        in (zip3 scores rpaths ws) ++ concat future
+        in (zip scores rpaths) ++ concat future
          
 
-printVerbose :: [(Int, [Command], World)] -> IO ()
+printVerbose :: [(Int, [Command])] -> IO ()
 printVerbose xs = do
     t0 <- getCPUTime
     helper t0 xs (-1) (0::Int)
@@ -28,9 +28,7 @@ printVerbose xs = do
             t1 <- getCPUTime
             let ops = (fromIntegral n / (fromIntegral $ t1-t0) * 10^12)::Double 
             printf "%.0f Op/s, %d Ops" ops n
-        helper t0 ((c', p', w'):xs) c n = do
-            --putStrLn $ reverse p'
-            --putStrLn $ unlines $ drawWorld w'
+        helper t0 ((c', p'):xs) c n = do
             if c' > c
                 then putStrLn (show c' ++ " " ++ (map commandToChar $ reverse p')) >>
                      (helper t0 xs c' $! (n+1))
