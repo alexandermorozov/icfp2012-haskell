@@ -17,7 +17,7 @@ limitedDepth depth w = (0,[]) : helper depth w []
             scores  = map score ws
             rpaths  = map (:rpath) cmds
             future  = zipWith (helper (depth-1)) ws rpaths
-        in (zip scores rpaths) ++ concat future
+        in zip scores rpaths ++ concat future
          
 
 printVerbose :: [(Int, [Command])] -> IO ()
@@ -26,11 +26,11 @@ printVerbose xs = do
     helper t0 xs (-1) (0::Int)
   where helper t0 [] _ n = do
             t1 <- getCPUTime
-            let ops = (fromIntegral n / (fromIntegral $ t1-t0) * 10^12)::Double 
-            printf "%.0f Op/s, %d Ops" ops n
-        helper t0 ((c', p'):xs) c n = do
+            let ops = (fromIntegral n / fromIntegral (t1-t0) * 10^12)::Double
+            printf "%.0f op/s, %d ops total" ops n
+        helper t0 ((c', p'):xs) c n =
             if c' > c
-                then putStrLn (show c' ++ " " ++ (map commandToChar $ reverse p')) >>
+                then putStrLn (show c' ++ " " ++ map commandToChar (reverse p')) >>
                      (helper t0 xs c' $! (n+1))
                 else helper t0 xs c $! (n+1)
 

@@ -8,13 +8,10 @@ import World
 main = do
     [mapFile, actions] <- getArgs
     fData <- readFile mapFile
-    let s = parseWorld fData
-    draw s
-    let s' = foldl' step s $ take 100000 $ cycle [CUp, CDown]
-    draw s'
-
     hSetBuffering stdin NoBuffering
 
+    let s = parseWorld fData
+    draw s
     loop s
   where
     draw s = do
@@ -24,8 +21,8 @@ main = do
                    " / Comms "  ++ show (possibleCommands s)
         putStrLn $ unlines $ drawWorld s
     loop s = do
-        cmdChar <- hGetChar stdin
-        hPutChar stdout '\r'
+        cmdChar <- getChar
+        putChar '\r'
         if cmdChar `elem` "hjklaws"
            then let cmd = case cmdChar of
                       'h' -> CLeft
