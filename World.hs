@@ -36,7 +36,7 @@ data World = World { _field         :: M.Map Point Cell
                    , _fieldHash     :: !Word64
                    , _sets          :: M.Map Cell (S.Set Point)
                    , _maybeFalling  :: S.Set Point -- stones that may fall on update
-                   , _rockFell     :: Bool -- a stone fell in prev turn
+                   , _rockFell      :: Bool -- a stone fell in prev turn
                    , _trampForward  :: M.Map Point Point
                    , _trampBackward :: M.Map Point [Point]
                    , _flooding      :: !Int
@@ -398,7 +398,8 @@ setCell p c' w = w { _field = f'
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
-        hash' = (w ^. fieldHash) `xor` (cellHash p c) `xor` (cellHash p c')
+        -- hash' = (w ^. fieldHash) `xor` (cellHash p c) `xor` (cellHash p c')
+        hash' = (w ^. fieldHash) - (cellHash p c) + (cellHash p c')
         toPoints = map (addPoint p . uncurry packPoint)
         fallArea = case c of -- here may be some extra points
             _ | c' == Empty -> toPoints [(-1,0),(-1,1),(0,1),(1,1),(1,0)]
@@ -414,7 +415,7 @@ setCellM :: Point -> Cell -> State World ()
 setCellM p c = modify $ setCell p c
 
 cellHash :: Point -> Cell -> Word64
-cellHash (Point p) c = asWord64 $ hash64Add p $ hash64 $ cellToChar c
+cellHash (Point p) c = asWord64 $ hash64Add p (hash64 $ cellToChar c)
 
 endM :: Ending -> State World ()
 endM e = modify (ending ^= Just e)
