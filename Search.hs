@@ -1,8 +1,9 @@
 import Control.Monad (forever)
 import Data.Lens.Lazy ((^$), (^.), (^=), (^%=))
 import Data.List (foldl', zipWith4)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, fromJust)
 import Data.Word (Word64)
+import qualified Data.Dequeue as DQ
 import qualified Data.Map as M
 import System.IO
 import System.Environment (getArgs)
@@ -29,22 +30,25 @@ depthTreeSearch depth w = (0,[]) : helper depth w []
         in zip scores rpaths ++ concat future
 
 
-depthGraphSearch :: Int -> World -> [(Int, [Command])]
-depthGraphSearch depth w =
+uninformedGraphSearch :: Int -> Bool -> World -> [(Int, [Command])]
+uninformedGraphSearch depth inBreadth w =
   let n0 = Node w [] 0 0
-  in (0,[]) : helper M.empty [n0] depth
+  in (0,[]) : helper M.empty (DQ.fromList [n0]) depth
   where
-    helper :: M.Map Word64 Int -> [Node] -> Int -> [(Int, [Command])]
-    helper _ [] _ = []
-    helper seen (Node w rpath sc depth : toGo) maxDepth =
-        let cmds     = possibleCommands w
+    helper :: M.Map Word64 Int -> DQ.BankersDequeue Node -> Int -> [(Int, [Command])]
+    helper seen toGo maxDepth | DQ.null toGo = []
+                              | otherwise    =
+        let (Just (Node w rpath sc depth), toGo') = DQ.popBack toGo
+            cmds     = possibleCommands w
             ws       = map (step w) cmds
             scores   = map score ws
             rpaths   = map (:rpath) cmds
             children = zipWith4 Node ws rpaths scores (repeat $ depth + 1)
             futureNs = filter isGood children
             seen'    = foldl' addNode seen futureNs
-        in zip scores rpaths ++ helper seen' (futureNs ++ toGo) maxDepth
+            toGo''   = let push = if inBreadth then DQ.pushFront else DQ.pushBack
+                       in foldl' push toGo' futureNs
+        in zip scores rpaths ++ helper seen' toGo'' maxDepth
         where isGood (Node w' _ sc' depth') =
                   let h     = w' ^. fieldHash
                       found = M.lookup h seen
@@ -72,7 +76,6 @@ main = do
     fData <- readFile mapFile
     let s = parseWorld fData
     --printVerbose $ depthTreeSearch 14 s
-    printVerbose $ depthGraphSearch 20 s
-    --print $ limitedDepth 6 s
+    printVerbose $ uninformedGraphSearch 25 True s
 
 
