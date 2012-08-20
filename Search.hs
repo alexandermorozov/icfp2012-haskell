@@ -75,7 +75,7 @@ main = do
     [mapFile] <- getArgs
     fData <- readFile mapFile
     let s = parseWorld fData
-    --printVerbose $ depthTreeSearch 14 s
-    printVerbose $ uninformedGraphSearch 25 True s
+    --printVerbose $ depthTreeSearch 12 s
+    printVerbose $ uninformedGraphSearch 18 True s
 
 

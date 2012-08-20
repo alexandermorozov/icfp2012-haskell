@@ -24,16 +24,17 @@ import Data.Word (Word64)
 import Debug.Trace (trace)
 import System.IO (stdin, Handle, hGetContents)
 
-data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
-          | TrEntry | TrExit | Unknown | Beard  | Razor | Lambda
-          deriving (Eq, Ord, Show)
+import Field
 
-newtype Point = Point Int deriving (Eq, Ord, Show)
+data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
+          | TrEntry | TrExit | Unknown | Beard  | Razor | Lambda | Undefined
+          deriving (Eq, Ord, Show)
 
 data Ending = Win | Abort | Fail deriving (Show)
 
-data World = World { _field         :: M.Map Point Cell
+data World = World { _field         :: Field Cell
                    , _fieldHash     :: !Word64
+                   , _dimensions    :: (Int, Int)
                    , _sets          :: M.Map Cell (S.Set Point)
                    , _maybeFalling  :: S.Set Point -- stones that may fall on update
                    , _rockFell      :: Bool -- a stone fell in prev turn
@@ -52,36 +53,17 @@ data World = World { _field         :: M.Map Point Cell
 
 data Command = CLeft | CRight | CUp | CDown | CWait | CShave | CAbort deriving (Show)
 
-cachedCellTypes = S.fromList [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
+cachedCellTypes = [Rock, HoRock, Robot, OLift, CLift, Beard, Razor, Lambda]
 
 $(makeLenses [''World])
 
 
-pBits, pMask, sMask :: Int
-pBits = 14
-pMask = 2^(pBits-1) - 1
-sMask = complement $ shift 1 (pBits-1) + shift 1 (pBits*2-1)
-
-packPoint :: Int -> Int -> Point
-packPoint x y = Point (shift (y .&. pMask) pBits + (x .&. pMask))
-
-addPoint :: Point -> Point -> Point
-addPoint (Point a) (Point b) = let s = a + b
-                               in Point (s .&. sMask)
-
--- unpacks only as positive integers
-pointX, pointY :: Point -> Int
-pointX (Point a) = a .&. pMask
-pointY (Point a) = shift a (-pBits) .&. pMask
-
-unpackPoint :: Point -> (Int, Int)
-unpackPoint p = (pointX p, pointY p)
-
 emptyWorld :: World
 emptyWorld =
-    World { _field = M.empty
+    World { _field = newField 5 Undefined
           , _fieldHash = 0
-          , _sets = M.empty
+          , _dimensions = (32,32)
+          , _sets = M.fromList $ map (\x -> (x, S.empty)) cachedCellTypes
           , _maybeFalling = S.empty
           , _rockFell = True        -- really unknown
           , _trampForward = M.empty
@@ -101,10 +83,10 @@ parseWorld :: String -> World
 parseWorld rawData = flip execState emptyWorld $ do
         let fw = getForwardTramp fLines trampPairs
         modify $ \w -> foldr setVar w vars
-        modify $ field ^= parseField fLines
+        modify $ parseField fLines
         modify $ trampForward ^= fw
         modify $ trampBackward ^= compileBackwardTramp fw
-        modify   recache
+        --modify   recache
   where
     (fLines, vars, trampPairs) = splitConf rawData
     splitConf cdata = (fieldLines, vars, tramps)
@@ -130,7 +112,7 @@ parseWorld rawData = flip execState emptyWorld $ do
         where helper x y [[]] = []
               helper x y ([]:lines) = helper 1 (y+1) lines
               helper x y ((c:rest):ls) = (packPoint x y, c) : helper (x+1) y (rest:ls)
-    parseField fLines = M.fromList $ map (second toCell) (cellList fLines)
+    parseField fLines w = foldl' (\w' (p,c) -> setCell p c w') w $ map (second toCell) (cellList fLines)
     toCell c =
          case c of
              '.' -> Earth
@@ -163,22 +145,20 @@ parseWorld rawData = flip execState emptyWorld $ do
     compileBackwardTramp fw = foldr ins M.empty (M.toList fw)
         where ins (src, dst) = M.insertWith (++) dst [src]
 
-recache :: World -> World
-recache w = let sets' = foldr add initial (M.toList $ w ^. field)
-                falling = S.union ((M.!) sets' Rock) ((M.!) sets' HoRock)
-            in (sets ^= sets') $ (maybeFalling ^= falling) w
-  where add (p, c) = M.adjust (S.insert p) c
-        initial = foldr (`M.insert` S.empty) M.empty $
-                                          S.toList cachedCellTypes
+--recache :: World -> World
+--recache w = let sets' = foldr add initial (M.toList $ w ^. field)
+--                falling = S.union ((M.!) sets' Rock) ((M.!) sets' HoRock)
+--            in (sets ^= sets') $ (maybeFalling ^= falling) w
+--  where add (p, c) = M.adjust (S.insert p) c
+--        initial = foldr (`M.insert` S.empty) M.empty $
+--                                          S.toList cachedCellTypes
 
 drawWorld :: World -> [String]
-drawWorld w = reverse $ map (renderLine "" 1) $ grouped $ M.toAscList (w ^. field)
-  where grouped = groupBy sameLine
-        sameLine (a, _) (b, _) = pointY a == pointY b
-        renderLine s i [] = reverse s
-        renderLine s i axs@((p, c):xs)
-             | pointX p == i = renderLine (cellToChar c:s) (pointX p + 1) xs
-             | otherwise = renderLine (' ':s) (i+1) axs
+drawWorld w = map line ys
+  where 
+    xs = [6..0]
+    ys = [0..6]
+    line y = map (cellToChar . flip getCell w) $ map (`packPoint` y) xs
 
 cellToChar :: Cell -> Char
 cellToChar c = case c of
@@ -193,6 +173,7 @@ cellToChar c = case c of
                 TrEntry -> 'T'
                 TrExit -> 't'
                 Unknown -> '?'
+                Undefined -> '-'
                 Beard -> 'W'
                 Razor -> '!'
                 Lambda -> '\\'
@@ -383,10 +364,15 @@ move dx dy = do
 
 
 getRobot :: World -> Point
-getRobot w = head $ S.toList $ fromJust $ M.lookup Robot (w ^. sets)
+getRobot w = head $ S.toList $ fromMaybe (S.fromList [packPoint 0 0]) $ M.lookup Robot (w ^. sets)
 
 getCell :: Point -> World -> Cell
-getCell p = M.findWithDefault Unknown p . (field ^$)
+getCell p w = 
+  let (x,y) = unpackPoint p
+      (xm,ym) = w ^. dimensions
+  in if x >= xm || x < 0 || y >= ym || y < 0
+        then Undefined
+        else fieldGet p (w ^. field)
 
 setCell :: Point -> Cell -> World -> World
 setCell p c' w = w { _field = f'
@@ -394,7 +380,7 @@ setCell p c' w = w { _field = f'
                    , _sets = s''
                    , _maybeFalling = mFalling
                    }
-  where f'  = M.insert p c' (w ^. field)
+  where f'  = fieldSet p c' (w ^. field)
         c   = getCell p w
         s'  = M.adjust (S.delete p) c (w ^. sets)
         s'' = M.adjust (S.insert p) c' s'
