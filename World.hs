@@ -24,6 +24,7 @@ import Debug.Trace (trace)
 import System.IO (stdin, Handle, hGetContents)
 
 import qualified Field as F
+--import qualified MapField as F
 import qualified Point as P
 
 data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
@@ -154,7 +155,8 @@ drawWorld w = map line ys
     (xm,ym) = w ^. dimensions
     xs = [1..xm]
     ys = [1..ym]
-    line y = map (\x -> cellToChar $ getCell (P.pack x y) w) xs
+    cells y = map (\x -> getCell (P.pack x y) w) xs
+    line y = map cellToChar $ filter (/= Undefined) (cells y)
 
 cellToChar :: Cell -> Char
 cellToChar c = case c of
