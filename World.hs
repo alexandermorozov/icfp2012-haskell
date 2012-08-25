@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module World ( World, emptyWorld, parseWorld, drawWorld
-             , turn, ending, razors, fieldHash, rockFell
+             , turn, ending, razors, lambdas, fieldHash, rockFell
              , step, possibleCommands, score
              , commandToChar, cellToChar
              , Command (..)
