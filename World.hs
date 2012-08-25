@@ -1,10 +1,9 @@
 {-# LANGUAGE TemplateHaskell #-}
-module World (World, emptyWorld, parseWorld, drawWorld,
-              turn, ending, razors, fieldHash, rockFell,
-              step, possibleCommands, score,
-              commandToChar, cellToChar,
-              toPoint, addPoints, Point (..),
-              Command (..)
+module World ( World, emptyWorld, parseWorld, drawWorld
+             , turn, ending, razors, fieldHash, rockFell
+             , step, possibleCommands, score
+             , commandToChar, cellToChar
+             , Command (..)
              ) where
 
 import Control.Arrow (second)
@@ -24,8 +23,8 @@ import Data.Word (Word64)
 import Debug.Trace (trace)
 import System.IO (stdin, Handle, hGetContents)
 
-import Field hiding (empty, get, set, field)
 import qualified Field as F
+import qualified Point as P
 
 data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
           | TrEntry | TrExit | Unknown | Beard  | Razor | Lambda | Undefined
@@ -33,14 +32,14 @@ data Cell = Empty   | Earth  | Rock    | HoRock | Wall  | Robot | OLift | CLift
 
 data Ending = Win | Abort | Fail deriving (Show)
 
-data World = World { _field         :: Field Cell
+data World = World { _field         :: F.Field Cell
                    , _fieldHash     :: !Word64
                    , _dimensions    :: (Int, Int)
-                   , _sets          :: M.Map Cell (S.Set Point)
-                   , _maybeFalling  :: S.Set Point -- stones that may fall on update
+                   , _sets          :: M.Map Cell (S.Set P.Point)
+                   , _maybeFalling  :: S.Set P.Point -- stones that may fall on update
                    , _rockFell      :: Bool -- a stone fell in prev turn
-                   , _trampForward  :: M.Map Point Point
-                   , _trampBackward :: M.Map Point [Point]
+                   , _trampForward  :: M.Map P.Point P.Point
+                   , _trampBackward :: M.Map P.Point [P.Point]
                    , _flooding      :: !Int
                    , _water         :: !Int
                    , _waterproof    :: !Int
@@ -61,9 +60,9 @@ $(makeLenses [''World])
 
 emptyWorld :: World
 emptyWorld =
-    World { _field = F.field Undefined 32 32
+    World { _field = F.empty
           , _fieldHash = 0
-          , _dimensions = (30, 25)
+          , _dimensions = (0, 0)
           , _sets = M.fromList $ map (\x -> (x, S.empty)) cachedCellTypes
           , _maybeFalling = S.empty
           , _rockFell = True        -- really unknown
@@ -83,11 +82,14 @@ emptyWorld =
 parseWorld :: String -> World
 parseWorld rawData = flip execState emptyWorld $ do
         let fw = getForwardTramp fLines trampPairs
+            width  = maximum $ map length fLines
+            height = length fLines
+        modify $ dimensions ^= (width, height)
+        modify $ field ^= F.field Undefined width height
         modify $ \w -> foldr setVar w vars
         modify $ parseField fLines
         modify $ trampForward ^= fw
         modify $ trampBackward ^= compileBackwardTramp fw
-        --modify   recache
   where
     (fLines, vars, trampPairs) = splitConf rawData
     splitConf cdata = (fieldLines, vars, tramps)
@@ -112,7 +114,7 @@ parseWorld rawData = flip execState emptyWorld $ do
     cellList fLines = helper 1 1 (reverse fLines)
         where helper x y [[]] = []
               helper x y ([]:lines) = helper 1 (y+1) lines
-              helper x y ((c:rest):ls) = (toPoint x y, c) : helper (x+1) y (rest:ls)
+              helper x y ((c:rest):ls) = (P.pack x y, c) : helper (x+1) y (rest:ls)
     parseField fLines w = foldl' (\w' (p,c) -> setCell p c w') w $ map (second toCell) (cellList fLines)
     toCell c =
          case c of
@@ -133,33 +135,26 @@ parseWorld rawData = flip execState emptyWorld $ do
     isTrampEntry c = c >= 'A' && c <= 'I'
     isTrampExit    = isDigit
 
-    getForwardTramp :: [String] -> [(Char, Char)] -> M.Map Point Point
+    getForwardTramp :: [String] -> [(Char, Char)] -> M.Map P.Point P.Point
     getForwardTramp fLines routes = forward
         where cells = cellList fLines
               isTramp x = isTrampEntry x || isTrampExit x
               all = map swap $ filter (isTramp . snd) cells
-              get a = fromMaybe (toPoint (-1) (-1)) (lookup a all)
+              get a = fromMaybe (P.pack (-1) (-1)) (lookup a all)
               getMapping (a, b) = (get a, get b)
               forward = M.fromList $ map getMapping routes
 
-    compileBackwardTramp :: M.Map Point Point -> M.Map Point [Point]
+    compileBackwardTramp :: M.Map P.Point P.Point -> M.Map P.Point [P.Point]
     compileBackwardTramp fw = foldr ins M.empty (M.toList fw)
         where ins (src, dst) = M.insertWith (++) dst [src]
 
---recache :: World -> World
---recache w = let sets' = foldr add initial (M.toList $ w ^. field)
---                falling = S.union ((M.!) sets' Rock) ((M.!) sets' HoRock)
---            in (sets ^= sets') $ (maybeFalling ^= falling) w
---  where add (p, c) = M.adjust (S.insert p) c
---        initial = foldr (`M.insert` S.empty) M.empty $
---                                          S.toList cachedCellTypes
-
 drawWorld :: World -> [String]
 drawWorld w = map line ys
-  where 
-    xs = [6..0]
-    ys = [0..6]
-    line y = map (cellToChar . flip getCell w) $ map (`toPoint` y) xs
+  where
+    (xm,ym) = w ^. dimensions
+    xs = [1..xm]
+    ys = [1..ym]
+    line y = map (\x -> cellToChar $ getCell (P.pack x y) w) xs
 
 cellToChar :: Cell -> Char
 cellToChar c = case c of
@@ -217,7 +212,7 @@ halfStep cmd = case cmd of
                       CWait  -> return True
                       CShave -> shave
   where
-    shavePoint :: Point -> State World Bool
+    shavePoint :: P.Point -> State World Bool
     shavePoint p = do c <- getCellM p
                       if c == Beard
                          then setCellM p Empty >> return True
@@ -227,7 +222,7 @@ halfStep cmd = case cmd of
         if rz > 0
            then do
                r <- gets getRobot
-               changed <- mapM (shavePoint . addPoints r) closeArea
+               changed <- mapM (shavePoint . P.add r) closeArea
                modify $ razors ^%= flip (-) 1
                return $ or changed
            else
@@ -248,7 +243,7 @@ update = do
         -- this way is faster:
         falling = s0 ^. maybeFalling
         toCheck = S.union falling (mergedSets types)
-        robotY = snd . fromPoint . getRobot $ s0
+        robotY = snd . P.unpack . getRobot $ s0
         isUnderWater = waterLevel s0 >= robotY
         isUnderWater' = waterLevel s0' >= robotY
     modify $ (maybeFalling ^= S.empty)
@@ -270,7 +265,7 @@ update = do
           otherwise -> return () -- stones from some points may be already moved out
     updateRock p c = do
         s <- get
-        let rel dx dy = getCell (addPoints p $ toPoint dx dy) s
+        let rel dx dy = getCell (P.add p $ P.pack dx dy) s
             cR  = rel   1    0
             cL  = rel (-1)   0
             cD  = rel   0  (-1)
@@ -284,18 +279,18 @@ update = do
               | otherwise                                   -> return ()
       where isRock c = c == Rock || c == HoRock
             breakRock HoRock p' = do
-                c <- getCellM (addPoints p' $ toPoint 0 (-1))
+                c <- getCellM (P.add p' $ P.pack 0 (-1))
                 return $ if c == Empty then HoRock else Lambda
             breakRock Rock p' = return Rock
-            moveRock dx dy = let p'  = addPoints p  $ toPoint dx dy
-                                 p'' = addPoints p' $ toPoint 0 (-1)
+            moveRock dx dy = let p'  = P.add p  $ P.pack dx dy
+                                 p'' = P.add p' $ P.pack 0 (-1)
                              in do c'  <- breakRock c p'
                                    c'' <- getCellM p''
                                    setCellM p Empty
                                    setCellM p' c'
                                    modify $ rockFell ^= True
                                    when (c'' == Robot) (endM Fail)
-    updateBeard p = mapM_ (growBeard . addPoints p) closeArea
+    updateBeard p = mapM_ (growBeard . P.add p) closeArea
     growBeard p = do c <- getCellM p
                      when (c == Empty) $ setCellM p Beard
 
@@ -328,13 +323,13 @@ waterLevel w =
        then (w ^. water) + (w ^. turn) `div` (w ^. flooding)
        else  w ^. water
 
-closeArea = [toPoint dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
+closeArea = [P.pack dx dy | dx <- [-1,0,1], dy <- [-1,0,1], dx /= 0 || dy /= 0]
 
 
 move :: Int -> Int -> State World Bool
 move dx dy = do
     r <- gets getRobot
-    let r' = addPoints r $ toPoint dx dy
+    let r' = P.add r $ P.pack dx dy
     c' <- getCellM r'
     case c' of
         Empty  -> moveBot r r'
@@ -348,10 +343,10 @@ move dx dy = do
         otherwise -> return False
     --if c' `elem` [Earth, Empty, Lambda, OLift, TrampEntry, Razor]
     --    then][]]
-  where moveBot :: Point -> Point -> State World Bool
+  where moveBot :: P.Point -> P.Point -> State World Bool
         moveBot r r' = setCellM r Empty >> setCellM r' Robot >> return True
         moveRock r r' dx c'= do
-            let r'' = addPoints r' $ toPoint dx 0
+            let r'' = P.add r' $ P.pack dx 0
             c'' <- getCellM r''
             if dx /= 0 && c'' == Empty
                then setCellM r Empty >> setCellM r' Robot >> setCellM r'' c' >>
@@ -364,18 +359,18 @@ move dx dy = do
             moveBot r exitP
 
 
-getRobot :: World -> Point
-getRobot w = head $ S.toList $ fromMaybe (S.fromList [toPoint 0 0]) $ M.lookup Robot (w ^. sets)
+getRobot :: World -> P.Point
+getRobot w = head $ S.toList $ fromMaybe (S.fromList [P.pack 0 0]) $ M.lookup Robot (w ^. sets)
 
-getCell :: Point -> World -> Cell
-getCell p w = 
-  let (x,y) = fromPoint p
+getCell :: P.Point -> World -> Cell
+getCell p w =
+  let (x,y) = P.unpack p
       (xm,ym) = w ^. dimensions
-  in if x >= xm || x < 0 || y >= ym || y < 0
+  in if x > xm || x <= 0 || y > ym || y <= 0
         then Undefined
         else F.get p (w ^. field)
 
-setCell :: Point -> Cell -> World -> World
+setCell :: P.Point -> Cell -> World -> World
 setCell p c' w = w { _field = f'
                    , _fieldHash = hash'
                    , _sets = s''
@@ -387,22 +382,22 @@ setCell p c' w = w { _field = f'
         s'' = M.adjust (S.insert p) c' s'
         -- hash' = (w ^. fieldHash) `xor` (cellHash p c) `xor` (cellHash p c')
         hash' = (w ^. fieldHash) - (cellHash p c) + (cellHash p c')
-        toPoints = map (addPoints p . uncurry toPoint)
+        packPs = map (P.add p . uncurry P.pack)
         fallArea = case c of -- here may be some extra points
-            _ | c' == Empty -> toPoints [(-1,0),(-1,1),(0,1),(1,1),(1,0)]
-              | c' == Rock || c' == HoRock -> toPoints [(0,0)]
-              | c' == Lambda               -> toPoints [(0,1)]
+            _ | c' == Empty -> packPs [(-1,0),(-1,1),(0,1),(1,1),(1,0)]
+              | c' == Rock || c' == HoRock -> packPs [(0,0)]
+              | c' == Lambda               -> packPs [(0,1)]
               | otherwise                  -> []
         mFalling = foldl' (flip S.insert) (w ^. maybeFalling) fallArea
 
-getCellM :: Point -> State World Cell
+getCellM :: P.Point -> State World Cell
 getCellM = gets . getCell
 
-setCellM :: Point -> Cell -> State World ()
+setCellM :: P.Point -> Cell -> State World ()
 setCellM p c = modify $ setCell p c
 
-cellHash :: Point -> Cell -> Word64
-cellHash (Point p) c = asWord64 $ hash64Add p (hash64 $ cellToChar c)
+cellHash :: P.Point -> Cell -> Word64
+cellHash p c = asWord64 $ hash64Add p (hash64 $ cellToChar c)
 
 endM :: Ending -> State World ()
 endM e = modify (ending ^= Just e)

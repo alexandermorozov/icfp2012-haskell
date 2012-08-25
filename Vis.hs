@@ -21,7 +21,7 @@ main = do
                   (s ^. turn) (score s) (s ^. razors) (show $ s ^. ending)
                   (show $ s ^. rockFell)
                   (s ^. fieldHash) (map commandToChar $ possibleCommands s)
-        putStrLn $ unlines $ drawWorld s
+        putStrLn $ unlines $ reverse $ drawWorld s
     loop s = do
         cmdChar <- getChar
         putChar '\r'
